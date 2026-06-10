@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package protocol;
+option go_package = "gopass/pkg/proto";
+
+service AgentService {
+    // Tunnel creates a bidirectional control and monitoring tunnel between Agent and Master.
+    rpc Tunnel(stream AgentMessage) returns (stream MasterMessage);
+}
+
+message AgentMessage {
+    oneof payload {
+        RegisterRequest register = 1;
+        Heartbeat heartbeat = 2;
+        TaskProgress progress = 3;
+    }
+}
+
+message RegisterRequest {
+    string alias = 1;
+    string token = 2;
+}
+
+message Heartbeat {
+    string alias = 1;
+    double cpu_usage = 2;
+    double memory_usage = 3;
+    double disk_usage = 4;
+}
+
+message TaskProgress {
+    string task_id = 1;
+    string state = 2;      // "CLONING", "BUILDING", "ROUTING", "SUCCESS", "FAILED"
+    string log_line = 3;
+}
+
+message MasterMessage {
+    oneof payload {
+        RegisterResponse register_response = 1;
+        DeployTask deploy_task = 2;
+    }
+}
+
+message RegisterResponse {
+    bool success = 1;
+    string error_message = 2;
+}
+
+message DeployTask {
+    string task_id = 1;
+    string git_url = 2;
+    string project_name = 3;
+    string routing_domain = 4;
+    int32 routing_port = 5;
+    map<string, string> env = 6;
+    bool use_ssl = 7;
+}

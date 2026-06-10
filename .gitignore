@@ -1,0 +1,31 @@
+# Binaries and build artifacts
+*.exe
+*.exe~
+/gopass-master
+/gopass-agent
+
+# Local configs (containing real credentials and tokens)
+master.yaml
+agent.yaml
+
+# Local databases and logs
+*.db
+*.log
+Caddyfile
+
+# IDE and system files
+.idea/
+.vscode/
+Thumbs.db
+
+# External tools and dependencies
+protoc-bin/
+
+# Test codes and directories
+cmd/test-e2e/
+cmd/run-all/
+pkg/db/db_test.go
+pkg/types/deploy_test.go
+
+# Project Documentation (per user request: "不要上传任何测试文件和文档")
+ChatOps.md

@@ -1,0 +1,11 @@
+# GOPASS Master Configuration Example
+
+# Path to the BBolt database file (relative or absolute)
+db_path: "gopass-master.db"
+
+# The gRPC listener address for Agents to establish bidirectional tunnels
+grpc_addr: "127.0.0.1:50051"
+
+# The Telegram Bot API Token for ChatOps interface.
+# If empty or left as default template, the Bot will start in MOCK simulation mode for local dev.
+telegram_token: "YOUR_TELEGRAM_BOT_TOKEN_HERE"
