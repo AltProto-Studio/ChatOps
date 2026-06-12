@@ -40,6 +40,9 @@ func FetchLatestRelease() (*GitHubRelease, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("未找到发布版本 (404)。请确保 GitHub 仓库为公开(Public)状态，且至少创建并发布了一个 Release")
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("github api returned status %d", resp.StatusCode)
 	}

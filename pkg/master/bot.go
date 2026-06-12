@@ -5,7 +5,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -556,8 +559,8 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			b.userStatesMu.Unlock()
 
 			aliasVal := strings.TrimSpace(text)
-			if aliasVal == "" || len(aliasVal) > 63 || !types.ProjectNameRegex.MatchString(aliasVal) {
-				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 别名无效（仅允许小写字母、数字和横线，长度不超过 63 字），请重新输入:")
+			if aliasVal == "" || len(aliasVal) > 63 || strings.ContainsAny(aliasVal, " \t\n\r") {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 别名无效（不能包含空格/换行，长度不超过 63 字节），请重新输入:")
 				return
 			}
 
@@ -575,12 +578,15 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			addr := b.gRPCServer.addr
 			displayAddr := addr
 			if strings.HasPrefix(addr, "127.0.0.1") || strings.HasPrefix(addr, "0.0.0.0") || strings.HasPrefix(addr, ":") {
-				displayAddr = "YOUR_MASTER_PUBLIC_IP" + strings.TrimPrefix(addr, "127.0.0.1")
-				displayAddr = strings.TrimPrefix(displayAddr, "0.0.0.0")
-				displayAddr = strings.TrimPrefix(displayAddr, ":")
-				if !strings.Contains(displayAddr, ":") {
-					displayAddr = "YOUR_MASTER_PUBLIC_IP:50051"
+				detectedIP := detectMasterIP()
+				portPart := "50051"
+				if strings.Contains(addr, ":") {
+					parts := strings.Split(addr, ":")
+					if len(parts) > 0 {
+						portPart = parts[len(parts)-1]
+					}
 				}
+				displayAddr = fmt.Sprintf("%s:%s", detectedIP, portPart)
 			}
 
 			masterKeyboard := tgbotapi.NewReplyKeyboard(
@@ -2175,3 +2181,30 @@ func (b *Bot) startSSHDeployProcess(chatID int64, user *types.User, state *UserC
 		updateStatus(fmt.Sprintf("❌ **联通超时**\n\n被控端程序已在远程主机启动，但未能在 15 秒内回连至 Master。\n\n请检查：\n1. 目标服务器与 Master (%s) 之间的网络连通性及防火墙端口规则。\n2. 远程主机上的日志文件 `~/gopass-agent.log`。", masterAddr))
 	}
 }
+
+// detectMasterIP attempts to retrieve the public IP of the Master, falling back to local IPs if offline.
+func detectMasterIP() string {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("https://api.ipify.org")
+	if err == nil {
+		defer resp.Body.Close()
+		ip, err := io.ReadAll(resp.Body)
+		if err == nil && len(ip) > 0 {
+			return string(ip)
+		}
+	}
+
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, address := range addrs {
+			if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+				if ipnet.IP.To4() != nil {
+					return ipnet.IP.String()
+				}
+			}
+		}
+	}
+
+	return "YOUR_MASTER_PUBLIC_IP"
+}
+
