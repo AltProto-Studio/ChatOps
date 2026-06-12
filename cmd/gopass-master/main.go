@@ -29,6 +29,11 @@ func main() {
 	log.Println("==================================================")
 
 	configPath := flag.String("config", "master.yaml", "Path to master configuration file")
+	grpcAddrFlag := flag.String("grpc-addr", "", "gRPC listen address (override config)")
+	tgTokenFlag := flag.String("tg-token", "", "Telegram bot token (override config)")
+	tlsEnabledFlag := flag.String("tls-enabled", "", "Enable gRPC TLS (true/false) (override config)")
+	tlsCertFlag := flag.String("tls-cert", "", "Path to TLS certificate file (override config)")
+	tlsKeyFlag := flag.String("tls-key", "", "Path to TLS key file (override config)")
 	flag.Parse()
 
 	// 1. Load YAML configuration
@@ -36,6 +41,23 @@ func main() {
 	cfg, err := types.LoadMasterConfig(*configPath)
 	if err != nil {
 		log.Fatalf("[FATAL] Configuration error: %v", err)
+	}
+
+	// Override with CLI flags if provided
+	if *grpcAddrFlag != "" {
+		cfg.GrpcAddr = *grpcAddrFlag
+	}
+	if *tgTokenFlag != "" {
+		cfg.TelegramToken = *tgTokenFlag
+	}
+	if *tlsEnabledFlag != "" {
+		cfg.TLSEnabled = (*tlsEnabledFlag == "true" || *tlsEnabledFlag == "1")
+	}
+	if *tlsCertFlag != "" {
+		cfg.TLSCertPath = *tlsCertFlag
+	}
+	if *tlsKeyFlag != "" {
+		cfg.TLSKeyPath = *tlsKeyFlag
 	}
 
 	log.Printf("[Init] Loaded settings: DB Path='%s', gRPC Server='%s'", cfg.DbPath, cfg.GrpcAddr)
@@ -88,7 +110,7 @@ func main() {
 	}
 
 	// 4. Start gRPC Server
-	server, err := master.NewServer(mgr, cfg.GrpcAddr)
+	server, err := master.NewServer(mgr, cfg.GrpcAddr, cfg.TLSEnabled, cfg.TLSCertPath, cfg.TLSKeyPath)
 	if err != nil {
 		log.Fatalf("Failed to initialize Master Server: %v", err)
 	}

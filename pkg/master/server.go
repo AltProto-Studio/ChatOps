@@ -2,6 +2,7 @@ package master
 
 import (
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
@@ -32,30 +34,36 @@ type ActiveAgent struct {
 // Server wraps the gRPC server and database manager
 type Server struct {
 	pb.UnimplementedAgentServiceServer
-	dbManager  *db.Manager
-	token      string
-	addr       string
-	mu         sync.RWMutex
-	agents     map[string]*ActiveAgent
-	grpcServer *grpc.Server
-	stopChan   chan struct{}
-	onProgress func(*pb.TaskProgress)
+	dbManager   *db.Manager
+	token       string
+	addr        string
+	mu          sync.RWMutex
+	tlsEnabled  bool
+	tlsCertPath string
+	tlsKeyPath  string
+	agents      map[string]*ActiveAgent
+	grpcServer  *grpc.Server
+	stopChan    chan struct{}
+	onProgress  func(*pb.TaskProgress)
 	onHeartbeat func(string, float64, float64)
 }
 
 // NewServer initializes and returns a Server instance
-func NewServer(dbManager *db.Manager, addr string) (*Server, error) {
+func NewServer(dbManager *db.Manager, addr string, tlsEnabled bool, certPath, keyPath string) (*Server, error) {
 	token, err := getOrInitCommunicationToken(dbManager)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Server{
-		dbManager: dbManager,
-		token:     token,
-		addr:      addr,
-		agents:    make(map[string]*ActiveAgent),
-		stopChan:  make(chan struct{}),
+		dbManager:   dbManager,
+		token:       token,
+		addr:        addr,
+		tlsEnabled:  tlsEnabled,
+		tlsCertPath: certPath,
+		tlsKeyPath:  keyPath,
+		agents:      make(map[string]*ActiveAgent),
+		stopChan:    make(chan struct{}),
 	}, nil
 }
 
@@ -82,7 +90,31 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to listen on %s: %w", s.addr, err)
 	}
 
-	s.grpcServer = grpc.NewServer()
+	var opts []grpc.ServerOption
+	if s.tlsEnabled {
+		var creds credentials.TransportCredentials
+		if s.tlsCertPath != "" && s.tlsKeyPath != "" {
+			var err error
+			creds, err = credentials.NewServerTLSFromFile(s.tlsCertPath, s.tlsKeyPath)
+			if err != nil {
+				return fmt.Errorf("failed to load TLS keys: %w", err)
+			}
+			log.Printf("[SECURITY] gRPC TLS enabled using certificate file: %s", s.tlsCertPath)
+		} else {
+			// Generate in-memory self-signed cert
+			cert, err := types.GenerateSelfSignedCert()
+			if err != nil {
+				return fmt.Errorf("failed to generate self-signed TLS cert: %w", err)
+			}
+			creds = credentials.NewTLS(&tls.Config{
+				Certificates: []tls.Certificate{cert},
+			})
+			log.Println("[SECURITY] gRPC TLS enabled using dynamic in-memory self-signed certificate")
+		}
+		opts = append(opts, grpc.Creds(creds))
+	}
+
+	s.grpcServer = grpc.NewServer(opts...)
 	pb.RegisterAgentServiceServer(s.grpcServer, s)
 
 	// Start gRPC server in a goroutine

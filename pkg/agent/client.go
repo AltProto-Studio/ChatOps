@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,29 +21,34 @@ import (
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Client handles gRPC communication from Agent to Master
 type Client struct {
-	alias      string
-	token      string
-	masterAddr string
-	insecure   bool
-	stopChan   chan struct{}
-	stopOnce   sync.Once
-	activeSend chan *pb.AgentMessage
+	alias         string
+	token         string
+	masterAddr    string
+	tlsEnabled    bool
+	tlsCAPath     string
+	tlsSkipVerify bool
+	stopChan      chan struct{}
+	stopOnce      sync.Once
+	activeSend    chan *pb.AgentMessage
 }
 
 // NewClient creates a new Agent Client instance
-func NewClient(alias, token, masterAddr string, insecure bool) *Client {
+func NewClient(alias, token, masterAddr string, tlsEnabled bool, tlsCAPath string, tlsSkipVerify bool) *Client {
 	return &Client{
-		alias:      alias,
-		token:      token,
-		masterAddr: masterAddr,
-		insecure:   insecure,
-		stopChan:   make(chan struct{}),
-		activeSend: make(chan *pb.AgentMessage, 100),
+		alias:         alias,
+		token:         token,
+		masterAddr:    masterAddr,
+		tlsEnabled:    tlsEnabled,
+		tlsCAPath:     tlsCAPath,
+		tlsSkipVerify: tlsSkipVerify,
+		stopChan:      make(chan struct{}),
+		activeSend:    make(chan *pb.AgentMessage, 100),
 	}
 }
 
@@ -89,17 +96,31 @@ func (c *Client) Stop() {
 func (c *Client) connectAndRun() error {
 	// Set up gRPC dial options
 	var opts []grpc.DialOption
-	if c.insecure {
+	if !c.tlsEnabled {
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
-		// In production, we'd load TLS credentials here.
-		// For verification simplicity in Phase 2, we fallback to insecure.
-		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		tlsConfig := &tls.Config{
+			InsecureSkipVerify: c.tlsSkipVerify,
+		}
+		if c.tlsCAPath != "" {
+			caCert, err := os.ReadFile(c.tlsCAPath)
+			if err != nil {
+				return fmt.Errorf("failed to read CA certificate file: %w", err)
+			}
+			caCertPool := x509.NewCertPool()
+			if !caCertPool.AppendCertsFromPEM(caCert) {
+				return fmt.Errorf("failed to parse CA certificate from %s", c.tlsCAPath)
+			}
+			tlsConfig.RootCAs = caCertPool
+		}
+		creds := credentials.NewTLS(tlsConfig)
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		log.Printf("[SECURITY] gRPC TLS client enabled (SkipVerify: %v, CAPath: %s)", c.tlsSkipVerify, c.tlsCAPath)
 	}
 
-	conn, err := grpc.Dial(c.masterAddr, opts...)
+	conn, err := grpc.NewClient(c.masterAddr, opts...)
 	if err != nil {
-		return fmt.Errorf("failed to dial: %w", err)
+		return fmt.Errorf("failed to connect to master: %w", err)
 	}
 	defer conn.Close()
 
