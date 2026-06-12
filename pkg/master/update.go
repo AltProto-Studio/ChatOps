@@ -13,19 +13,23 @@ import (
 	"time"
 )
 
+// GitHubReleaseAsset represents a single asset inside a GitHub Release
+type GitHubReleaseAsset struct {
+	ID                 int64  `json:"id"`
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
 // GitHubRelease represents the structure of the latest release from GitHub API
 type GitHubRelease struct {
-	TagName string `json:"tag_name"`
-	HTMLURL string `json:"html_url"`
-	Body    string `json:"body"`
-	Assets  []struct {
-		Name               string `json:"name"`
-		BrowserDownloadURL string `json:"browser_download_url"`
-	} `json:"assets"`
+	TagName string               `json:"tag_name"`
+	HTMLURL string               `json:"html_url"`
+	Body    string               `json:"body"`
+	Assets  []GitHubReleaseAsset `json:"assets"`
 }
 
 // FetchLatestRelease queries the GitHub API for the latest ChatOps release
-func FetchLatestRelease() (*GitHubRelease, error) {
+func FetchLatestRelease(githubToken string) (*GitHubRelease, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequest("GET", "https://api.github.com/repos/AltProto-Studio/ChatOps/releases/latest", nil)
 	if err != nil {
@@ -33,6 +37,18 @@ func FetchLatestRelease() (*GitHubRelease, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "ChatOps-Updater")
+
+	// Authentication token fallback chain
+	token := githubToken
+	if token == "" {
+		token = os.Getenv("GOPASS_GITHUB_TOKEN")
+	}
+	if token == "" {
+		token = os.Getenv("GITHUB_TOKEN")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -85,8 +101,8 @@ func IsNewerVersion(current, latest string) bool {
 	return latPatch > curPatch
 }
 
-// DownloadAndReplaceBinary downloads a binary from URL and replaces the currently running executable
-func DownloadAndReplaceBinary(downloadURL string) error {
+// DownloadAndReplaceBinary downloads a binary from URL or asset ID and replaces the currently running executable
+func DownloadAndReplaceBinary(asset *GitHubReleaseAsset, githubToken string) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get current executable path: %w", err)
@@ -107,7 +123,35 @@ func DownloadAndReplaceBinary(downloadURL string) error {
 	}()
 
 	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Get(downloadURL)
+	var req *http.Request
+
+	// Resolve token for request
+	token := githubToken
+	if token == "" {
+		token = os.Getenv("GOPASS_GITHUB_TOKEN")
+	}
+	if token == "" {
+		token = os.Getenv("GITHUB_TOKEN")
+	}
+
+	// Use Private API download endpoint if token is present
+	if token != "" && asset.ID != 0 {
+		apiURL := fmt.Sprintf("https://api.github.com/repos/AltProto-Studio/ChatOps/releases/assets/%d", asset.ID)
+		req, err = http.NewRequest("GET", apiURL, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create API request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Accept", "application/octet-stream")
+	} else {
+		req, err = http.NewRequest("GET", asset.BrowserDownloadURL, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+	}
+	req.Header.Set("User-Agent", "ChatOps-Updater")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download new binary: %w", err)
 	}
@@ -194,8 +238,8 @@ func RestartProcess(dbMgr interface{ Close() error }, gRPCServer interface{ Stop
 	return nil
 }
 
-// GetMatchingAssetURL returns the download URL matching the current OS and Arch
-func (r *GitHubRelease) GetMatchingAssetURL(component string) string {
+// GetMatchingAsset returns the release asset matching the current OS and Arch
+func (r *GitHubRelease) GetMatchingAsset(component string) *GitHubReleaseAsset {
 	// Component is "master" or "agent"
 	// OS: "windows", "linux", "darwin"
 	// Arch: "amd64", "arm64"
@@ -211,7 +255,7 @@ func (r *GitHubRelease) GetMatchingAssetURL(component string) string {
 	for _, asset := range r.Assets {
 		expectedName := fmt.Sprintf("gopass-%s-%s", component, expectedSuffix)
 		if asset.Name == expectedName {
-			return asset.BrowserDownloadURL
+			return &asset
 		}
 	}
 	
@@ -227,16 +271,15 @@ func (r *GitHubRelease) GetMatchingAssetURL(component string) string {
 			continue
 		}
 		if contains(asset.Name, goOS) && contains(asset.Name, goArch) {
-			return asset.BrowserDownloadURL
+			return &asset
 		}
 	}
 
-	return ""
+	return nil
 }
 
 // Simple helper to check if a string contains another substring
 func contains(s, substr string) bool {
-	// Crude check
 	return len(s) >= len(substr) && stringContains(s, substr)
 }
 

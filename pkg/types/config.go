@@ -16,6 +16,7 @@ type MasterConfig struct {
 	TLSEnabled    bool   `yaml:"tls_enabled"`
 	TLSCertPath   string `yaml:"tls_cert_path"`
 	TLSKeyPath    string `yaml:"tls_key_path"`
+	GithubToken   string `yaml:"github_token"`
 }
 
 // AgentConfig defines settings for gopass-agent
@@ -37,6 +38,7 @@ func DefaultMasterConfig() *MasterConfig {
 		TLSEnabled:    false,
 		TLSCertPath:   "",
 		TLSKeyPath:    "",
+		GithubToken:   "",
 	}
 }
 
@@ -101,6 +103,9 @@ func LoadMasterConfig(path string) (*MasterConfig, error) {
 	}
 	if envKey := os.Getenv("GOPASS_TLS_KEY_PATH"); envKey != "" {
 		cfg.TLSKeyPath = envKey
+	}
+	if envGH := os.Getenv("GOPASS_GITHUB_TOKEN"); envGH != "" {
+		cfg.GithubToken = envGH
 	}
 
 	return &cfg, nil

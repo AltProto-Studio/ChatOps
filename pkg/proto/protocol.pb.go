@@ -544,6 +544,8 @@ func (x *DeployTask) GetUseSsl() bool {
 type UpdateAgentTask struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DownloadUrl   string                 `protobuf:"bytes,1,opt,name=download_url,json=downloadUrl,proto3" json:"download_url,omitempty"`
+	GithubToken   string                 `protobuf:"bytes,2,opt,name=github_token,json=githubToken,proto3" json:"github_token,omitempty"`
+	TagName       string                 `protobuf:"bytes,3,opt,name=tag_name,json=tagName,proto3" json:"tag_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -581,6 +583,20 @@ func (*UpdateAgentTask) Descriptor() ([]byte, []int) {
 func (x *UpdateAgentTask) GetDownloadUrl() string {
 	if x != nil {
 		return x.DownloadUrl
+	}
+	return ""
+}
+
+func (x *UpdateAgentTask) GetGithubToken() string {
+	if x != nil {
+		return x.GithubToken
+	}
+	return ""
+}
+
+func (x *UpdateAgentTask) GetTagName() string {
+	if x != nil {
+		return x.TagName
 	}
 	return ""
 }
@@ -628,9 +644,11 @@ const file_pkg_proto_protocol_proto_rawDesc = "" +
 	"\ause_ssl\x18\a \x01(\bR\x06useSsl\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"4\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"r\n" +
 	"\x0fUpdateAgentTask\x12!\n" +
-	"\fdownload_url\x18\x01 \x01(\tR\vdownloadUrl2M\n" +
+	"\fdownload_url\x18\x01 \x01(\tR\vdownloadUrl\x12!\n" +
+	"\fgithub_token\x18\x02 \x01(\tR\vgithubToken\x12\x19\n" +
+	"\btag_name\x18\x03 \x01(\tR\atagName2M\n" +
 	"\fAgentService\x12=\n" +
 	"\x06Tunnel\x12\x16.protocol.AgentMessage\x1a\x17.protocol.MasterMessage(\x010\x01B\x12Z\x10gopass/pkg/protob\x06proto3"
 

@@ -67,6 +67,7 @@ type Bot struct {
 	dbManager    *db.Manager
 	gRPCServer   *Server
 	token        string
+	githubToken  string
 	api          *tgbotapi.BotAPI
 	useMock      bool
 	mu           sync.Mutex
@@ -80,7 +81,7 @@ type Bot struct {
 }
 
 // NewBot initializes a new Bot instance
-func NewBot(dbManager *db.Manager, gRPCServer *Server, token string, useMock bool) (*Bot, error) {
+func NewBot(dbManager *db.Manager, gRPCServer *Server, token string, githubToken string, useMock bool) (*Bot, error) {
 	var api *tgbotapi.BotAPI
 	var err error
 
@@ -93,16 +94,17 @@ func NewBot(dbManager *db.Manager, gRPCServer *Server, token string, useMock boo
 	}
 
 	bot := &Bot{
-		dbManager:  dbManager,
-		gRPCServer: gRPCServer,
-		token:      token,
-		api:        api,
-		useMock:    useMock || (api == nil),
-		lastEdit:   make(map[int]time.Time),
-		sessions:   make(map[string]*DeploymentSession),
-		qc:         NewQueueCoordinator(),
-		stopChan:   make(chan struct{}),
-		userStates: make(map[int64]*UserConversationState),
+		dbManager:    dbManager,
+		gRPCServer:   gRPCServer,
+		token:        token,
+		githubToken:  githubToken,
+		api:          api,
+		useMock:      useMock || (api == nil),
+		lastEdit:     make(map[int]time.Time),
+		sessions:     make(map[string]*DeploymentSession),
+		qc:           NewQueueCoordinator(),
+		stopChan:     make(chan struct{}),
+		userStates:   make(map[int64]*UserConversationState),
 	}
 
 	// Connect gRPC callbacks to Bot
@@ -439,20 +441,20 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			if choice == "yes" || choice == "y" {
 				b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🔄 正在从 GitHub 下载最新 Master 更新包，请稍候...", nil)
 
-				release, err := FetchLatestRelease()
+				release, err := FetchLatestRelease(b.githubToken)
 				if err != nil {
 					b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 无法获取最新 Release: " + err.Error(), b.getMainMenuMarkup(user))
 					return
 				}
 
-				downloadURL := release.GetMatchingAssetURL("master")
-				if downloadURL == "" {
+				asset := release.GetMatchingAsset("master")
+				if asset == nil {
 					b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 未在 Release 资产中找到适配当前平台/架构的 Master 二进制文件！", b.getMainMenuMarkup(user))
 					return
 				}
 
 				b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "📥 正在下载新版本 Master 二进制...", nil)
-				err = DownloadAndReplaceBinary(downloadURL)
+				err = DownloadAndReplaceBinary(asset, b.githubToken)
 				if err != nil {
 					b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 下载并替换二进制失败: " + err.Error(), b.getMainMenuMarkup(user))
 					return
@@ -1133,7 +1135,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 		b.updateWizardPrompt(chatID, fromUID, "CHECKING_UPDATE", "🔄 正在从 GitHub 检查最新版本...", nil)
 
-		release, err := FetchLatestRelease()
+		release, err := FetchLatestRelease(b.githubToken)
 		if err != nil {
 			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 检查更新失败：" + err.Error(), b.getMainMenuMarkup(user))
 			return
@@ -1213,7 +1215,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 		nodeAlias := strings.TrimPrefix(text, "🖥️ 升级节点 ")
 		
-		release, err := FetchLatestRelease()
+		release, err := FetchLatestRelease(b.githubToken)
 		if err != nil {
 			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 无法获取最新 Release: " + err.Error(), b.getMainMenuMarkup(user))
 			return
@@ -1223,7 +1225,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 		b.updateWizardPrompt(chatID, fromUID, "UPGRADING_AGENT", fmt.Sprintf("📡 正在向 Agent '%s' 下发升级指令 (版本: %s)...", nodeAlias, release.TagName), nil)
 
-		success := b.gRPCServer.SendUpdateTask(nodeAlias, templateURL)
+		success := b.gRPCServer.SendUpdateTask(nodeAlias, templateURL, b.githubToken, release.TagName)
 		if !success {
 			b.updateWizardPrompt(chatID, fromUID, "IDLE", fmt.Sprintf("❌ 向 Agent '%s' 发送升级指令失败，节点可能已下线。", nodeAlias), b.getMainMenuMarkup(user))
 			return

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -9,11 +10,22 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
-// DownloadAndReplaceAgentBinary downloads the agent binary from URL and replaces the running executable
-func DownloadAndReplaceAgentBinary(downloadURL string) error {
+type GitHubReleaseAsset struct {
+	ID                 int64  `json:"id"`
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
+type GitHubRelease struct {
+	Assets []GitHubReleaseAsset `json:"assets"`
+}
+
+// DownloadAndReplaceAgentBinary downloads the agent binary from URL (or GitHub API if token is present)
+func DownloadAndReplaceAgentBinary(downloadURL string, githubToken string, tagName string) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get current executable path: %w", err)
@@ -33,7 +45,85 @@ func DownloadAndReplaceAgentBinary(downloadURL string) error {
 	}()
 
 	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Get(downloadURL)
+	var req *http.Request
+
+	// If token and tag are present, fetch asset ID first to support private repos
+	if githubToken != "" && tagName != "" {
+		log.Printf("[Agent Updater] Private repo update: fetching release info for tag %s...", tagName)
+		apiURL := fmt.Sprintf("https://api.github.com/repos/AltProto-Studio/ChatOps/releases/tags/%s", tagName)
+		
+		infoReq, err := http.NewRequest("GET", apiURL, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create release info request: %w", err)
+		}
+		infoReq.Header.Set("Authorization", "Bearer "+githubToken)
+		infoReq.Header.Set("User-Agent", "ChatOps-Agent-Updater")
+
+		infoResp, err := client.Do(infoReq)
+		if err != nil {
+			return fmt.Errorf("failed to fetch release info: %w", err)
+		}
+		defer infoResp.Body.Close()
+
+		if infoResp.StatusCode != http.StatusOK {
+			return fmt.Errorf("github api returned status %d while fetching release info", infoResp.StatusCode)
+		}
+
+		var release GitHubRelease
+		if err := json.NewDecoder(infoResp.Body).Decode(&release); err != nil {
+			return fmt.Errorf("failed to decode release info: %w", err)
+		}
+
+		// Find matching asset
+		goOS := runtime.GOOS
+		goArch := runtime.GOARCH
+		expectedSuffix := fmt.Sprintf("%s-%s", goOS, goArch)
+		if goOS == "windows" {
+			expectedSuffix = fmt.Sprintf("%s-%s.exe", goOS, goArch)
+		}
+		expectedName := fmt.Sprintf("gopass-agent-%s", expectedSuffix)
+
+		var matchedAsset *GitHubReleaseAsset
+		for _, asset := range release.Assets {
+			if asset.Name == expectedName {
+				matchedAsset = &asset
+				break
+			}
+		}
+
+		// Fallback fuzzy match
+		if matchedAsset == nil {
+			for _, asset := range release.Assets {
+				if strings.Contains(asset.Name, "agent") && strings.Contains(asset.Name, goOS) && strings.Contains(asset.Name, goArch) {
+					matchedAsset = &asset
+					break
+				}
+			}
+		}
+
+		if matchedAsset == nil {
+			return fmt.Errorf("failed to find matching asset in release for %s/%s", goOS, goArch)
+		}
+
+		log.Printf("[Agent Updater] Matched private asset ID %d (%s). Downloading...", matchedAsset.ID, matchedAsset.Name)
+		assetURL := fmt.Sprintf("https://api.github.com/repos/AltProto-Studio/ChatOps/releases/assets/%d", matchedAsset.ID)
+		
+		req, err = http.NewRequest("GET", assetURL, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create asset download request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+githubToken)
+		req.Header.Set("Accept", "application/octet-stream")
+	} else {
+		// Public download
+		req, err = http.NewRequest("GET", downloadURL, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create request: %w", err)
+		}
+	}
+	req.Header.Set("User-Agent", "ChatOps-Agent-Updater")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download new binary: %w", err)
 	}

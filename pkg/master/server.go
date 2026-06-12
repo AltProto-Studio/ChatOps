@@ -271,7 +271,7 @@ func (s *Server) Deploy(alias string, task *pb.DeployTask) error {
 }
 
 // SendUpdateTask sends an UpdateAgentTask down to a specific connected Agent
-func (s *Server) SendUpdateTask(alias string, downloadURL string) bool {
+func (s *Server) SendUpdateTask(alias string, downloadURL string, githubToken string, tagName string) bool {
 	s.mu.RLock()
 	agent, exists := s.agents[alias]
 	s.mu.RUnlock()
@@ -284,6 +284,8 @@ func (s *Server) SendUpdateTask(alias string, downloadURL string) bool {
 		Payload: &pb.MasterMessage_UpdateAgentTask{
 			UpdateAgentTask: &pb.UpdateAgentTask{
 				DownloadUrl: downloadURL,
+				GithubToken: githubToken,
+				TagName:     tagName,
 			},
 		},
 	})

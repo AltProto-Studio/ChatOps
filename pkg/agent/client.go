@@ -356,7 +356,7 @@ func (c *Client) handleUpdateTask(task *pb.UpdateAgentTask) {
 
 	log.Printf("[Agent] Resolved download URL: %s", resolvedURL)
 
-	err := DownloadAndReplaceAgentBinary(resolvedURL)
+	err := DownloadAndReplaceAgentBinary(resolvedURL, task.GithubToken, task.TagName)
 	if err != nil {
 		log.Printf("[Agent] Update failed: %v", err)
 		return

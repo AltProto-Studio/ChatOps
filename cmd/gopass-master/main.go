@@ -34,6 +34,7 @@ func main() {
 	tlsEnabledFlag := flag.String("tls-enabled", "", "Enable gRPC TLS (true/false) (override config)")
 	tlsCertFlag := flag.String("tls-cert", "", "Path to TLS certificate file (override config)")
 	tlsKeyFlag := flag.String("tls-key", "", "Path to TLS key file (override config)")
+	githubTokenFlag := flag.String("github-token", "", "GitHub token for private repository releases (override config)")
 	flag.Parse()
 
 	// 1. Load YAML configuration
@@ -58,6 +59,9 @@ func main() {
 	}
 	if *tlsKeyFlag != "" {
 		cfg.TLSKeyPath = *tlsKeyFlag
+	}
+	if *githubTokenFlag != "" {
+		cfg.GithubToken = *githubTokenFlag
 	}
 
 	log.Printf("[Init] Loaded settings: DB Path='%s', gRPC Server='%s'", cfg.DbPath, cfg.GrpcAddr)
@@ -137,7 +141,7 @@ func main() {
 		log.Println("[Init] Telegram Token detected. Starting Telegram Bot in REAL mode...")
 	}
 
-	bot, err := master.NewBot(mgr, server, cfg.TelegramToken, useMock)
+	bot, err := master.NewBot(mgr, server, cfg.TelegramToken, cfg.GithubToken, useMock)
 	if err != nil {
 		log.Fatalf("Failed to initialize Telegram Bot: %v", err)
 	}

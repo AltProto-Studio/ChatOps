@@ -59,4 +59,6 @@ message DeployTask {
 
 message UpdateAgentTask {
     string download_url = 1;
+    string github_token = 2;
+    string tag_name = 3;
 }
