@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"log"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -65,9 +66,11 @@ func LoadMasterConfig(path string) (*MasterConfig, error) {
 		fullData := append(commentedHeader, data...)
 		
 		if err := os.WriteFile(path, fullData, 0644); err != nil {
-			return nil, fmt.Errorf("failed to create default master config: %w", err)
+			log.Printf("[WARNING] Failed to write default master config file: %v", err)
+		} else {
+			log.Printf("[WARNING] Configuration file '%s' was missing. A default template has been generated.", path)
 		}
-		return nil, fmt.Errorf("config file '%s' was missing. A default template has been generated. Please edit it and restart", path)
+		return cfg, nil
 	}
 
 	data, err := os.ReadFile(path)
@@ -117,9 +120,11 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 		fullData := append(commentedHeader, data...)
 		
 		if err := os.WriteFile(path, fullData, 0644); err != nil {
-			return nil, fmt.Errorf("failed to create default agent config: %w", err)
+			log.Printf("[WARNING] Failed to write default agent config file: %v", err)
+		} else {
+			log.Printf("[WARNING] Configuration file '%s' was missing. A default template has been generated.", path)
 		}
-		return nil, fmt.Errorf("config file '%s' was missing. A default template has been generated. Please edit it and restart", path)
+		return cfg, nil
 	}
 
 	data, err := os.ReadFile(path)
