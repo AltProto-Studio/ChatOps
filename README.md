@@ -1,33 +1,28 @@
-# ChatOps - Minimalist Telegram Operations Control System
-# ChatOps - 极简无痕 Telegram 运维控制系统
+# ChatOps - Sleek & Minimalist Telegram Operations Control System
+
+<p align="center">
+  <b>🇺🇸 English</b> |
+  <a href="README.zh-CN.md">🇨🇳 简体中文</a> |
+  <a href="LICENSE.md">⚖️ License Audit</a> |
+  <a href="CHANGELOG.md">🏷️ Releases</a>
+</p>
 
 ---
-
-### 🇺🇸 English Version / 🇨🇳 中文版 / ⚖️ Compliance / 🏷️ Releases
-Click on any section header below to expand and view the respective documentation.  
-点击下方各栏目页签展开并阅读相应的技术手册。
-
----
-
-<details open>
-<summary><b>🇺🇸 Tab 1: English User Manual (Usage & Features)</b></summary>
 
 ## 📖 How to Use / Getting Started
 
 ### 1. One-Click Automated Installation (Master Node on Linux amd64)
-If you want to quickly deploy the Master control plane as a background daemon on a Linux server, you can use our automated systemd script:
+To quickly deploy the Master control plane as a background systemd daemon on a Linux server, run:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AltProto-Studio/ChatOps/main/install-master.sh | sudo bash -s -- --token YOUR_TELEGRAM_BOT_TOKEN
 ```
-*Replace `YOUR_TELEGRAM_BOT_TOKEN` with your actual token from @BotFather. This script will download the latest binary, generate `/opt/gopass/master.yaml`, configure the systemd unit `gopass-master.service`, and start the daemon.*
+*Replace `YOUR_TELEGRAM_BOT_TOKEN` with your actual token from @BotFather. This script creates the `/opt/gopass/` folder, downloads the latest binary, generates the config file `master.yaml`, registers the systemd unit `gopass-master.service`, and starts it.*
 
 ---
 
-### 2. Manual Compilation & Setup (Master & Agent)
+### 2. Manual Setup & Compilation (Master & Agent)
 
-If you prefer compiling from source or running on other platforms (e.g. Windows):
-
-#### Step A: Configure Settings
+#### Step A: Setup Configurations
 ```bash
 # Copy Master configuration template
 cp master.yaml.example master.yaml
@@ -43,7 +38,7 @@ cp agent.yaml.example agent.yaml
 # Compile Master control plane
 go build -o build/gopass-master.exe ./cmd/gopass-master
 
-# Compile Agent被控端 daemon
+# Compile Agent daemon
 go build -o build/gopass-agent.exe ./cmd/gopass-agent
 ```
 
@@ -53,174 +48,29 @@ go build -o build/gopass-agent.exe ./cmd/gopass-agent
 
 ---
 
-### 3. Telegram Interaction Guide
+### 3. Telegram Bot Interaction
 
-1. **Bootstrap Admin**: The first Telegram user to send any message to the Bot is automatically registered as the supreme Master administrator.
+1. **Bootstrap Supreme Admin**: The first Telegram user to message the Bot is automatically bound as the supreme Master administrator.
 2. **Authorize Sub-accounts**:
-   * Generate an invite code: Send `/invite [uses]` or click `🔑 生成邀请码` in the menu.
-   * Apply invite code: Sub-users send `/join <invite_code>` to gain access.
+   * Generate an invite code: Click `🔑 生成邀请码` in the main menu or send `/invite [uses]`.
+   * Register: Sub-users send `/join <invite_code>` to obtain access.
 3. **SSH Remote Agent Installer**:
    * Go to `🖥️ 节点状态` -> `➕ 添加服务器`.
-   * Follow the wizard to enter the remote server IP, port, username, password/key, and Master IP.
-   * The Master will automatically compile, upload, daemonize, and handshake the remote Agent node.
+   * Follow the wizard to input the remote server IP, port, username, password/key, and Master IP.
+   * Master will dynamically cross-compile `linux-amd64` Agent binary, upload it via SSH stdin, run it in background, and complete gRPC handshake.
 4. **App Deployment**:
-   * Click `🚀 部署应用` -> choose an online node -> enter custom domain -> set Cloudflare DNS integration -> select SSL certificate mode -> enter Git repository URL.
-5. **Auto Hot Update**:
+   * Click `🚀 部署应用` -> choose an online node -> enter custom domain -> configure Cloudflare DNS -> select SSL certificate mode -> enter Git repository URL.
+5. **One-Click Hot Update**:
    * Click `⚙️ 更多功能` -> `🔍 检查更新`.
-   * If a new version is found, read the changelog and type `yes` or `no` to confirm upgrading the Master.
-   * Send upgrade requests to Agents to trigger remote self-updating.
+   * If an update exists, review the changelog and type `yes` or `no` to confirm upgrading the Master.
+   * Dispatch upgrades to Agent nodes to trigger remote self-updating.
 
 ---
 
 ## 🚀 ChatOps Feature Overview
 
-* **Zero-Trace UI**: Built on a single-bubble message update and physical clean-up state machine. All user credential inputs are deleted within milliseconds, and intermediate logs are swept clean after deployments.
+* **Zero-Trace UI**: Single-bubble message updates and physical clean-up state machines. User credentials are deleted within milliseconds, and intermediate logs are swept clean after deployments.
 * **Auto-SSH Node Deployment**: Cross-compiles Linux `amd64` Agent binaries on the fly, uploads them over SSH stdin without requiring SFTP, runs them as background daemons, and completes TLS handshakes.
-* **ECDSA gRPC TLS**: gRPC tunnels are TLS-encrypted. Supports automatic creation of a secure 10-year self-signed certificate in memory if no file keys are supplied.
+* **gRPC TLS Encryption & In-Memory Certs**: gRPC tunnels are TLS-encrypted. Supports automatic creation of a secure 10-year ECDSA self-signed certificate in Master's memory if no file keys are supplied.
 * **Automatic DNS & Proxy**: Modifies Cloudflare A/CNAME records on the fly and configures Caddy proxy blocks with automatic ACME Let's Encrypt certificates.
 * **FIFO Build Queues & Load Balancing**: Serializes builds on target Agents. If Agent CPU usage exceeds 85% or Memory exceeds 90%, it blocks builds until the server cools down.
-
-</summary>
-
----
-
-<details>
-<summary><b>🇨🇳 Tab 2: 中文版用户手册 (使用说明与功能介绍)</b></summary>
-
-## 📖 快速上手与使用指南
-
-### 1. 控制端一键快捷安装 (Linux amd64 操作系统)
-如果您希望快速在 Linux 服务器上将 Master 控制端作为系统守护进程（Daemon）运行，可直接执行以下一键安装脚本：
-```bash
-curl -fsSL https://raw.githubusercontent.com/AltProto-Studio/ChatOps/main/install-master.sh | sudo bash -s -- --token 您的TELEGRAM机器人TOKEN
-```
-*请将 `您的TELEGRAM机器人TOKEN` 替换为从 @BotFather 获取的真实 Token。该脚本将自动下载最新二进制包、在 `/opt/gopass` 下生成配置文件、创建 `gopass-master.service` Systemd 服务并自动启动运行。*
-
----
-
-### 2. 双端手动编译与配置运行
-
-如果您需要从源码编译，或者在 Windows 等其他系统上运行：
-
-#### 步骤 A：复制并修改配置模板
-```bash
-# 复制控制端（Master）配置
-cp master.yaml.example master.yaml
-
-# 复制被控端（Agent）配置
-cp agent.yaml.example agent.yaml
-```
-* 编辑 `master.yaml` 并填入您的 `telegram_token`。
-* 启动 Master 后控制台会生成一个安全通信密钥，将其拷贝并填入 `agent.yaml` 的 `communication_token` 中。
-
-#### 步骤 B：本地编译
-```bash
-# 编译 Master 控制端
-go build -o build/gopass-master.exe ./cmd/gopass-master
-
-# 编译 Agent 被控端
-go build -o build/gopass-agent.exe ./cmd/gopass-agent
-```
-
-#### 步骤 C：命令行启动
-* 运行 Master：`./build/gopass-master.exe -config master.yaml`
-* 运行 Agent：`./build/gopass-agent.exe -config agent.yaml`
-
----
-
-### 3. Telegram 机器人使用流程
-
-1. **首次绑定**：Master 服务首次启动后，第一个向 Bot 发送任何消息的 Telegram 账号将自动绑定为系统最高管理员。
-2. **邀请与加入**：
-   * 生成激活码：点击主菜单的 `🔑 生成邀请码` 或发送 `/invite [次数]`。
-   * 子账号加入：未授权人员向 Bot 发送 `/join <激活码>` 绑定为普通子账户。
-3. **SSH 远程自动化部署被控端**：
-   * 在主菜单点击 `🖥️ 节点状态` -> `➕ 添加服务器`。
-   * 按照提示输入目标机器 IP、SSH 端口、用户名、密码/私钥，以及 Master 的对外 IP。
-   * 系统将自动完成跨平台交叉编译、安全上传、后台启动和 15 秒 gRPC 加密连通性校验。
-4. **派发部署任务**：
-   * 点击 `🚀 部署应用` -> 选择在线节点 -> 输入解析域名 -> 配置 Cloudflare DNS -> 选择 SSL 状态 -> 发送 Git 仓库地址。
-5. **一键 GitHub 热更新**：
-   * 点击 `⚙️ 更多功能` -> `🔍 检查更新`。
-   * 系统将从 GitHub API 自动对比版本。若发现新版，展示更新日志并提示手动输入 `yes` 或 `no` 确认更新，回复 `yes` 即可自动无缝热替换 Master 二进制并优雅重启。
-
----
-
-## 🚀 功能特性大体介绍
-
-* **极简无痕交互**：首创“滚动气泡擦除”机制，历史向导过程气泡自动物理删除，用户发送的敏感密码/私钥毫秒级即发即删，绝不在聊天面板留下痕迹。
-* **一键 SSH 部署**：免去 SFTP 依赖，通过 SSH 管道标准输入传输编译好的 Linux ELF 字节流，并进行自适应 Master 外部 IP 回连检测。
-* **内存自签名 TLS 加密**：gRPC 控制信道全面实施 TLS 加密。支持在缺失物理证书文件时在内存中动态签发 ECDSA 证书，消除敏感密钥写盘风险。
-* **超载熔断拦截**：为被控节点配备 FIFO 排队队列，若节点 CPU 占用超 85% 或内存超 90% 自动挂起队首任务，资源回落后自唤醒执行。
-* **反代与 DNS 闭环**：全自动配置 Cloudflare DNS 纯解析或 CDN 代理，并协同 Agent 端 Caddy 代理服务器自适应申请 Let's Encrypt 证书。
-
-</summary>
-
----
-
-<details>
-<summary><b>⚖️ Tab 3: Open Source Licenses & Compliance Audit (开源协议与合规审计)</b></summary>
-
-## ⚖️ Open Source License & Compliance Audit / 开源许可与协议审计
-
-This project is licensed under the **Apache License, Version 2.0**. You can view the full terms in the [LICENSE](file:///d:/ChatOps/LICENSE) file.  
-本项目采用 **Apache License 2.0** 开源许可协议发布。
-
-### Direct Dependencies / 直接依赖项目引用声明
-We build upon and express gratitude to the following permissive open-source packages:  
-本项目引用并致谢以下优秀的开源依赖库：
-
-* **go.etcd.io/bbolt** (Apache-2.0) - Embedded transactional KV store / 嵌入式事务 KV 数据库。
-* **github.com/go-telegram-bot-api/telegram-bot-api** (MIT) - Telegram Bot integration / 机器人接口层。
-* **github.com/shirou/gopsutil** (BSD-3-Clause) - Hardware statistics utility / 硬件指标监测。
-* **github.com/docker/docker** (Apache-2.0) - Docker SDK for runtime container management / 容器调度引擎。
-* **google.golang.org/grpc** (Apache-2.0) - High-performance gRPC tunnel framework / 控制流隧道通信。
-* **google.golang.org/protobuf** (BSD-3-Clause) - Protocol Buffers serialization support / 协议编码解码。
-* **golang.org/x/crypto** (BSD-3-Clause) - Cryptographic toolkit containing SSH client / SSH 连接与加密套件。
-* **gopkg.in/yaml.v3** (MIT / Apache-2.0) - YAML configuration file parser / 配置文件加载。
-
-### Compliance & Conflict Audit Report / 协议冲突审计报告
-1. **Copyleft Audit**: All dependencies use highly permissive open-source licenses (MIT, BSD-3-Clause, or Apache-2.0). There are **no copyleft dependencies** (such as GPL, AGPL, or LGPL) in the direct dependency tree.  
-   **无传染性限制**：引入的直接依赖项均为宽松的 MIT、BSD 或 Apache 协议，**不含有任何 GPL, AGPL, LGPL 等强传染性 copyleft 限制性协议**。
-2. **Compatibility Statement**: The MIT and BSD-3-Clause licenses are fully compatible with the Apache-2.0 license. They permit modification, sublicensing, and distribution under different terms, provided the original copyright notice is maintained.  
-   **协议兼容性**：MIT 和 BSD 3-Clause 协议与 Apache-2.0 协议完全兼容，允许项目进行整体的二次授权、分发或封装，已在编译分发包中完整保留其版权信息。
-3. **Conclusion**: There are **no licensing conflicts or violations** in the ChatOps codebase. All dependencies are handled in strict compliance with their respective open-source licenses.  
-   **审计结论**：ChatOps 项目**不存在任何开源协议冲突或违反行为**，完全合规。
-
-</details>
-
----
-
-<details>
-<summary><b>🏷️ Tab 4: Release History & Version Logs (版本发布记录)</b></summary>
-
-## 🏷️ Release History & Version Logs / 版本发布记录
-
-All release binaries (Master & Agent for both Windows and Linux) are compiled and attached to their respective Release tags.
-
-### 🟢 [v1.2.0] - Active Release / 当前活跃版本
-* **New Features & Enhancements**:
-  * **Interactive Update Confirmation**: Integrated GitHub update checks in `⚙️ 更多功能` -> `🔍 检查更新`. Shows release body and prompts for manual `yes`/`no` keyboard inputs to confirm upgrading Master.
-  * **Sleek Unicode Node Alias**: Relaxed node alias requirements to support arbitrary Chinese, English, underscores, and hyphens (excluding whitespaces to prevent breaking command parsing).
-  * **Auto Master IP Detection**: Implements public IP retrieval (via `api.ipify.org` lookup) and local network interface IP fallback, providing a real IP recommended on the Telegram Reply Keyboard.
-  * **Configuration Warning Fallback**: Replaced hard crash logs with a warning fallback when `master.yaml` or `agent.yaml` is missing, auto-generating template files and running with default values.
-  * **Test Script Compilation Fixes**: Fixed signature compile issues in `run-all` and `test-e2e` scripts.
-
----
-
-### 🟡 [v1.1.0] - Node SSH Deployment Release
-* **New Features & Enhancements**:
-  * **Auto-SSH Node Addition**: Integrated `➕ 添加服务器` wizard, supporting remote Linux Agent installation via SSH stdin streams.
-  * **Interactive Wizard Message Sweeper**: Added dynamic message clean-up. Prompt bubbles and user password inputs are deleted instantly.
-  * **gRPC TLS Safe Refactoring**: Supports dynamic ECDSA 10-year self-signed TLS certificates generated directly in the Master's memory.
-
----
-
-### 🔴 [v1.0.0] - Initial Release
-* **New Features & Enhancements**:
-  * **gRPC Tunnel Core**: Bidirectional streaming RPC tunnel between Master and Agent with automated index-backoff reconnections.
-  * **Telegram Command Core**: Initial chatbot interface with `/invite`, `/join`, and `/deploy` command handlers.
-  * **FIFO Build queues**: Implements serialized task execution queues with CPU/Memory threshold interceptors.
-  * **Caddy API routing**: Dynamic reverse proxy updates with fallbacks to file-based overrides.
-
-</details>
