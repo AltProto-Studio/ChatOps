@@ -430,6 +430,77 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			return
 		}
 
+		if state.Step == "WAITING_FOR_MASTER_UPDATE_CONFIRM" {
+			b.userStatesMu.Lock()
+			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
+			b.userStatesMu.Unlock()
+
+			choice := strings.ToLower(strings.TrimSpace(text))
+			if choice == "yes" || choice == "y" {
+				b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🔄 正在从 GitHub 下载最新 Master 更新包，请稍候...", nil)
+
+				release, err := FetchLatestRelease()
+				if err != nil {
+					b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 无法获取最新 Release: " + err.Error(), b.getMainMenuMarkup(user))
+					return
+				}
+
+				downloadURL := release.GetMatchingAssetURL("master")
+				if downloadURL == "" {
+					b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 未在 Release 资产中找到适配当前平台/架构的 Master 二进制文件！", b.getMainMenuMarkup(user))
+					return
+				}
+
+				b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "📥 正在下载新版本 Master 二进制...", nil)
+				err = DownloadAndReplaceBinary(downloadURL)
+				if err != nil {
+					b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 下载并替换二进制失败: " + err.Error(), b.getMainMenuMarkup(user))
+					return
+				}
+
+				b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🎉 Master 二进制更新成功！正在重新启动服务，本聊天会话将短暂断开。请在 3 秒后发送任意消息唤醒...", nil)
+				time.Sleep(1 * time.Second)
+
+				// Cleanup state
+				b.userStatesMu.Lock()
+				delete(b.userStates, fromUID)
+				b.userStatesMu.Unlock()
+
+				if state.PromptMsgID > 0 {
+					b.deleteMessage(chatID, state.PromptMsgID)
+				}
+				for _, id := range state.UserMsgIDs {
+					b.deleteMessage(chatID, id)
+				}
+
+				err = RestartProcess(b.dbManager, b.gRPCServer)
+				if err != nil {
+					b.reply(chatID, "❌ 重新启动服务失败: " + err.Error())
+				}
+				return
+
+			} else if choice == "no" || choice == "n" {
+				b.userStatesMu.Lock()
+				delete(b.userStates, fromUID)
+				b.userStatesMu.Unlock()
+
+				if state.PromptMsgID > 0 {
+					b.deleteMessage(chatID, state.PromptMsgID)
+				}
+				for _, id := range state.UserMsgIDs {
+					b.deleteMessage(chatID, id)
+				}
+
+				msgCfg := tgbotapi.NewMessage(chatID, "已取消更新并返回主菜单。")
+				msgCfg.ReplyMarkup = b.getMainMenuMarkup(user)
+				_, _ = b.api.Send(msgCfg)
+				return
+			} else {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 输入无效。请手动输入 **yes** 或 **no** 确认是否升级 Master：")
+				return
+			}
+		}
+
 		if state.Step == "WAITING_FOR_GIT_URL" {
 			b.userStatesMu.Lock()
 			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
@@ -1075,57 +1146,18 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 		}
 
 		// Found newer version!
-		msgText := fmt.Sprintf("🔍 **发现新版本**: `%s` (当前: `%s`)\n————————————————————\n**更新日志**:\n%s", release.TagName, types.CurrentVersion, release.Body)
+		msgText := fmt.Sprintf("🔍 **发现新版本**: `%s` (当前: `%s`)\n————————————————————\n**更新日志**:\n%s\n\n是否立即对 Master 节点执行自动升级？\n请手动输入 **yes** 或 **no** 进行确认：", release.TagName, types.CurrentVersion, release.Body)
 		
 		var buttons [][]tgbotapi.KeyboardButton
 		row1 := []tgbotapi.KeyboardButton{
-			tgbotapi.NewKeyboardButton("⚡ 升级 Master"),
-			tgbotapi.NewKeyboardButton("🖥️ 升级 Agent"),
+			tgbotapi.NewKeyboardButton("yes"),
+			tgbotapi.NewKeyboardButton("no"),
 		}
-		row2 := []tgbotapi.KeyboardButton{
-			tgbotapi.NewKeyboardButton("⬅️ 返回主菜单"),
-		}
-		buttons = append(buttons, row1, row2)
+		buttons = append(buttons, row1)
 		replyMarkup := tgbotapi.NewReplyKeyboard(buttons...)
 		replyMarkup.ResizeKeyboard = true
 
-		b.updateWizardPrompt(chatID, fromUID, "UPDATE_FOUND", msgText, replyMarkup)
-
-	case text == "⚡ 升级 Master":
-		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" {
-			b.reply(chatID, "❌ 权限不足。")
-			return
-		}
-
-		b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🔄 正在从 GitHub 检查/下载最新 Master 更新包，请稍候...", nil)
-
-		release, err := FetchLatestRelease()
-		if err != nil {
-			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 无法获取最新 Release: " + err.Error(), b.getMainMenuMarkup(user))
-			return
-		}
-
-		downloadURL := release.GetMatchingAssetURL("master")
-		if downloadURL == "" {
-			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 未在 Release 资产中找到适配当前平台/架构的 Master 二进制文件！", b.getMainMenuMarkup(user))
-			return
-		}
-
-		b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "📥 正在下载新版本 Master 二进制...", nil)
-		err = DownloadAndReplaceBinary(downloadURL)
-		if err != nil {
-			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 下载并替换二进制失败: " + err.Error(), b.getMainMenuMarkup(user))
-			return
-		}
-
-		b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🎉 Master 二进制更新成功！正在重新启动服务，本聊天会话将短暂断开。请在 3 秒后发送任意消息唤醒...", nil)
-		time.Sleep(1 * time.Second)
-
-		err = RestartProcess(b.dbManager, b.gRPCServer)
-		if err != nil {
-			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 重新启动服务失败: " + err.Error(), b.getMainMenuMarkup(user))
-		}
+		b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_MASTER_UPDATE_CONFIRM", msgText, replyMarkup)
 
 	case text == "🖥️ 升级 Agent":
 		b.deleteMessage(chatID, msgID)
