@@ -270,6 +270,26 @@ func (s *Server) Deploy(alias string, task *pb.DeployTask) error {
 	})
 }
 
+// SendUpdateTask sends an UpdateAgentTask down to a specific connected Agent
+func (s *Server) SendUpdateTask(alias string, downloadURL string) bool {
+	s.mu.RLock()
+	agent, exists := s.agents[alias]
+	s.mu.RUnlock()
+
+	if !exists {
+		return false
+	}
+
+	err := agent.Stream.Send(&pb.MasterMessage{
+		Payload: &pb.MasterMessage_UpdateAgentTask{
+			UpdateAgentTask: &pb.UpdateAgentTask{
+				DownloadUrl: downloadURL,
+			},
+		},
+	})
+	return err == nil
+}
+
 // handleHeartbeat updates node hardware stats in bbolt
 func (s *Server) handleHeartbeat(h *pb.Heartbeat) {
 	node, err := s.dbManager.GetNode(h.Alias)

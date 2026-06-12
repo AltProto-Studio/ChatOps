@@ -1047,6 +1047,152 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 		msgCfg.ReplyMarkup = b.getMainMenuMarkup(user)
 		_, _ = b.api.Send(msgCfg)
 
+	case text == "🔍 检查更新":
+		b.deleteMessage(chatID, msgID)
+		if user.Role != "master" {
+			b.reply(chatID, "❌ 权限不足。")
+			return
+		}
+
+		b.updateWizardPrompt(chatID, fromUID, "CHECKING_UPDATE", "🔄 正在从 GitHub 检查最新版本...", nil)
+
+		release, err := FetchLatestRelease()
+		if err != nil {
+			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 检查更新失败：" + err.Error(), b.getMainMenuMarkup(user))
+			return
+		}
+
+		if !IsNewerVersion(types.CurrentVersion, release.TagName) {
+			msgText := fmt.Sprintf("✨ **当前已是最新版本 (%s)！**\n\nGitHub 最新版本: `%s`", types.CurrentVersion, release.TagName)
+			b.updateWizardPrompt(chatID, fromUID, "IDLE", msgText, b.getMainMenuMarkup(user))
+			return
+		}
+
+		// Found newer version!
+		msgText := fmt.Sprintf("🔍 **发现新版本**: `%s` (当前: `%s`)\n————————————————————\n**更新日志**:\n%s", release.TagName, types.CurrentVersion, release.Body)
+		
+		var buttons [][]tgbotapi.KeyboardButton
+		row1 := []tgbotapi.KeyboardButton{
+			tgbotapi.NewKeyboardButton("⚡ 升级 Master"),
+			tgbotapi.NewKeyboardButton("🖥️ 升级 Agent"),
+		}
+		row2 := []tgbotapi.KeyboardButton{
+			tgbotapi.NewKeyboardButton("⬅️ 返回主菜单"),
+		}
+		buttons = append(buttons, row1, row2)
+		replyMarkup := tgbotapi.NewReplyKeyboard(buttons...)
+		replyMarkup.ResizeKeyboard = true
+
+		b.updateWizardPrompt(chatID, fromUID, "UPDATE_FOUND", msgText, replyMarkup)
+
+	case text == "⚡ 升级 Master":
+		b.deleteMessage(chatID, msgID)
+		if user.Role != "master" {
+			b.reply(chatID, "❌ 权限不足。")
+			return
+		}
+
+		b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🔄 正在从 GitHub 检查/下载最新 Master 更新包，请稍候...", nil)
+
+		release, err := FetchLatestRelease()
+		if err != nil {
+			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 无法获取最新 Release: " + err.Error(), b.getMainMenuMarkup(user))
+			return
+		}
+
+		downloadURL := release.GetMatchingAssetURL("master")
+		if downloadURL == "" {
+			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 未在 Release 资产中找到适配当前平台/架构的 Master 二进制文件！", b.getMainMenuMarkup(user))
+			return
+		}
+
+		b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "📥 正在下载新版本 Master 二进制...", nil)
+		err = DownloadAndReplaceBinary(downloadURL)
+		if err != nil {
+			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 下载并替换二进制失败: " + err.Error(), b.getMainMenuMarkup(user))
+			return
+		}
+
+		b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🎉 Master 二进制更新成功！正在重新启动服务，本聊天会话将短暂断开。请在 3 秒后发送任意消息唤醒...", nil)
+		time.Sleep(1 * time.Second)
+
+		err = RestartProcess(b.dbManager, b.gRPCServer)
+		if err != nil {
+			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 重新启动服务失败: " + err.Error(), b.getMainMenuMarkup(user))
+		}
+
+	case text == "🖥️ 升级 Agent":
+		b.deleteMessage(chatID, msgID)
+		if user.Role != "master" {
+			b.reply(chatID, "❌ 权限不足。")
+			return
+		}
+
+		nodes, err := b.dbManager.ListNodes()
+		if err != nil {
+			b.reply(chatID, "❌ 数据库查询节点失败。")
+			return
+		}
+
+		var activeNodes []*types.ServerNode
+		for _, n := range nodes {
+			if n.Connected {
+				activeNodes = append(activeNodes, n)
+			}
+		}
+
+		if len(activeNodes) == 0 {
+			b.updateWizardPrompt(chatID, fromUID, "IDLE", "⚠️ 当前没有在线的 Agent 节点！无法进行升级。", b.getMainMenuMarkup(user))
+			return
+		}
+
+		var replyButtons [][]tgbotapi.KeyboardButton
+		var currentRow []tgbotapi.KeyboardButton
+		for i, n := range activeNodes {
+			btn := tgbotapi.NewKeyboardButton(fmt.Sprintf("🖥️ 升级节点 %s", n.Alias))
+			currentRow = append(currentRow, btn)
+			if (i+1)%2 == 0 {
+				replyButtons = append(replyButtons, currentRow)
+				currentRow = nil
+			}
+		}
+		if len(currentRow) > 0 {
+			replyButtons = append(replyButtons, currentRow)
+		}
+		replyButtons = append(replyButtons, []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("⬅️ 返回主菜单")})
+
+		replyMarkup := tgbotapi.NewReplyKeyboard(replyButtons...)
+		replyMarkup.ResizeKeyboard = true
+
+		b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_AGENT_UPGRADE_SELECTION", "🖥️ 请选择要升级的被控端 Agent 节点:", replyMarkup)
+
+	case strings.HasPrefix(text, "🖥️ 升级节点 "):
+		b.deleteMessage(chatID, msgID)
+		if user.Role != "master" {
+			b.reply(chatID, "❌ 权限不足。")
+			return
+		}
+
+		nodeAlias := strings.TrimPrefix(text, "🖥️ 升级节点 ")
+		
+		release, err := FetchLatestRelease()
+		if err != nil {
+			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 无法获取最新 Release: " + err.Error(), b.getMainMenuMarkup(user))
+			return
+		}
+
+		templateURL := fmt.Sprintf("https://github.com/AltProto-Studio/ChatOps/releases/download/%s/gopass-agent-{{OS}}-{{ARCH}}{{EXT}}", release.TagName)
+
+		b.updateWizardPrompt(chatID, fromUID, "UPGRADING_AGENT", fmt.Sprintf("📡 正在向 Agent '%s' 下发升级指令 (版本: %s)...", nodeAlias, release.TagName), nil)
+
+		success := b.gRPCServer.SendUpdateTask(nodeAlias, templateURL)
+		if !success {
+			b.updateWizardPrompt(chatID, fromUID, "IDLE", fmt.Sprintf("❌ 向 Agent '%s' 发送升级指令失败，节点可能已下线。", nodeAlias), b.getMainMenuMarkup(user))
+			return
+		}
+
+		b.updateWizardPrompt(chatID, fromUID, "IDLE", fmt.Sprintf("✅ 已成功向 Agent '%s' 下发升级指令。该节点将自动下载新版本并重连。请稍后在 '🖥️ 节点状态' 中查看升级结果。", nodeAlias), b.getMainMenuMarkup(user))
+
 	case cmd == "/join":
 		if len(parts) < 2 {
 			b.reply(chatID, "❌ 请提供激活码。用法: `/join <激活码>`")
@@ -1231,6 +1377,7 @@ func (b *Bot) showMoreFunctionsMenu(chatID int64, user *types.User) {
 		tgbotapi.NewKeyboardButton("📜 查看 Master 日志"),
 	}
 	row2 := []tgbotapi.KeyboardButton{
+		tgbotapi.NewKeyboardButton("🔍 检查更新"),
 		tgbotapi.NewKeyboardButton("⬅️ 返回主菜单"),
 	}
 	replyButtons = append(replyButtons, row1, row2)

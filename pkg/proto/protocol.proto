@@ -38,6 +38,7 @@ message MasterMessage {
     oneof payload {
         RegisterResponse register_response = 1;
         DeployTask deploy_task = 2;
+        UpdateAgentTask update_agent_task = 3;
     }
 }
 
@@ -54,4 +55,8 @@ message DeployTask {
     int32 routing_port = 5;
     map<string, string> env = 6;
     bool use_ssl = 7;
+}
+
+message UpdateAgentTask {
+    string download_url = 1;
 }

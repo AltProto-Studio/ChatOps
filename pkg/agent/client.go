@@ -11,6 +11,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -225,6 +227,8 @@ func (c *Client) connectAndRun() error {
 
 			if deploy := msg.GetDeployTask(); deploy != nil {
 				go c.handleDeployTask(deploy)
+			} else if update := msg.GetUpdateAgentTask(); update != nil {
+				go c.handleUpdateTask(update)
 			}
 		}
 	}()
@@ -335,6 +339,36 @@ func (c *Client) handleDeployTask(task *pb.DeployTask) {
 		protocolStr = "https"
 	}
 	c.sendProgress(task.TaskId, "SUCCESS", fmt.Sprintf("🎉 Deployed successfully! App live at %s://%s", protocolStr, cfg.Routing.Domain))
+}
+
+// handleUpdateTask updates the Agent binary and restarts
+func (c *Client) handleUpdateTask(task *pb.UpdateAgentTask) {
+	log.Printf("[Agent] Received update task from Master. Download URL template: %s", task.DownloadUrl)
+
+	resolvedURL := task.DownloadUrl
+	resolvedURL = strings.ReplaceAll(resolvedURL, "{{OS}}", runtime.GOOS)
+	resolvedURL = strings.ReplaceAll(resolvedURL, "{{ARCH}}", runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		resolvedURL = strings.ReplaceAll(resolvedURL, "{{EXT}}", ".exe")
+	} else {
+		resolvedURL = strings.ReplaceAll(resolvedURL, "{{EXT}}", "")
+	}
+
+	log.Printf("[Agent] Resolved download URL: %s", resolvedURL)
+
+	err := DownloadAndReplaceAgentBinary(resolvedURL)
+	if err != nil {
+		log.Printf("[Agent] Update failed: %v", err)
+		return
+	}
+
+	log.Println("[Agent] Update completed successfully. Re-spawning new agent and exiting...")
+	c.Stop()
+
+	err = RestartAgent()
+	if err != nil {
+		log.Printf("[Agent] Failed to restart: %v", err)
+	}
 }
 
 // getSystemStats retrieves host CPU, memory, and disk usage statistics

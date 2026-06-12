@@ -305,6 +305,7 @@ type MasterMessage struct {
 	//
 	//	*MasterMessage_RegisterResponse
 	//	*MasterMessage_DeployTask
+	//	*MasterMessage_UpdateAgentTask
 	Payload       isMasterMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -365,6 +366,15 @@ func (x *MasterMessage) GetDeployTask() *DeployTask {
 	return nil
 }
 
+func (x *MasterMessage) GetUpdateAgentTask() *UpdateAgentTask {
+	if x != nil {
+		if x, ok := x.Payload.(*MasterMessage_UpdateAgentTask); ok {
+			return x.UpdateAgentTask
+		}
+	}
+	return nil
+}
+
 type isMasterMessage_Payload interface {
 	isMasterMessage_Payload()
 }
@@ -377,9 +387,15 @@ type MasterMessage_DeployTask struct {
 	DeployTask *DeployTask `protobuf:"bytes,2,opt,name=deploy_task,json=deployTask,proto3,oneof"`
 }
 
+type MasterMessage_UpdateAgentTask struct {
+	UpdateAgentTask *UpdateAgentTask `protobuf:"bytes,3,opt,name=update_agent_task,json=updateAgentTask,proto3,oneof"`
+}
+
 func (*MasterMessage_RegisterResponse) isMasterMessage_Payload() {}
 
 func (*MasterMessage_DeployTask) isMasterMessage_Payload() {}
+
+func (*MasterMessage_UpdateAgentTask) isMasterMessage_Payload() {}
 
 type RegisterResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -525,6 +541,50 @@ func (x *DeployTask) GetUseSsl() bool {
 	return false
 }
 
+type UpdateAgentTask struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DownloadUrl   string                 `protobuf:"bytes,1,opt,name=download_url,json=downloadUrl,proto3" json:"download_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateAgentTask) Reset() {
+	*x = UpdateAgentTask{}
+	mi := &file_pkg_proto_protocol_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateAgentTask) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateAgentTask) ProtoMessage() {}
+
+func (x *UpdateAgentTask) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_proto_protocol_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateAgentTask.ProtoReflect.Descriptor instead.
+func (*UpdateAgentTask) Descriptor() ([]byte, []int) {
+	return file_pkg_proto_protocol_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *UpdateAgentTask) GetDownloadUrl() string {
+	if x != nil {
+		return x.DownloadUrl
+	}
+	return ""
+}
+
 var File_pkg_proto_protocol_proto protoreflect.FileDescriptor
 
 const file_pkg_proto_protocol_proto_rawDesc = "" +
@@ -547,11 +607,12 @@ const file_pkg_proto_protocol_proto_rawDesc = "" +
 	"\fTaskProgress\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05state\x18\x02 \x01(\tR\x05state\x12\x19\n" +
-	"\blog_line\x18\x03 \x01(\tR\alogLine\"\x9e\x01\n" +
+	"\blog_line\x18\x03 \x01(\tR\alogLine\"\xe7\x01\n" +
 	"\rMasterMessage\x12I\n" +
 	"\x11register_response\x18\x01 \x01(\v2\x1a.protocol.RegisterResponseH\x00R\x10registerResponse\x127\n" +
 	"\vdeploy_task\x18\x02 \x01(\v2\x14.protocol.DeployTaskH\x00R\n" +
-	"deployTaskB\t\n" +
+	"deployTask\x12G\n" +
+	"\x11update_agent_task\x18\x03 \x01(\v2\x19.protocol.UpdateAgentTaskH\x00R\x0fupdateAgentTaskB\t\n" +
 	"\apayload\"Q\n" +
 	"\x10RegisterResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
@@ -567,7 +628,9 @@ const file_pkg_proto_protocol_proto_rawDesc = "" +
 	"\ause_ssl\x18\a \x01(\bR\x06useSsl\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012M\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"4\n" +
+	"\x0fUpdateAgentTask\x12!\n" +
+	"\fdownload_url\x18\x01 \x01(\tR\vdownloadUrl2M\n" +
 	"\fAgentService\x12=\n" +
 	"\x06Tunnel\x12\x16.protocol.AgentMessage\x1a\x17.protocol.MasterMessage(\x010\x01B\x12Z\x10gopass/pkg/protob\x06proto3"
 
@@ -583,7 +646,7 @@ func file_pkg_proto_protocol_proto_rawDescGZIP() []byte {
 	return file_pkg_proto_protocol_proto_rawDescData
 }
 
-var file_pkg_proto_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_pkg_proto_protocol_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_pkg_proto_protocol_proto_goTypes = []any{
 	(*AgentMessage)(nil),     // 0: protocol.AgentMessage
 	(*RegisterRequest)(nil),  // 1: protocol.RegisterRequest
@@ -592,7 +655,8 @@ var file_pkg_proto_protocol_proto_goTypes = []any{
 	(*MasterMessage)(nil),    // 4: protocol.MasterMessage
 	(*RegisterResponse)(nil), // 5: protocol.RegisterResponse
 	(*DeployTask)(nil),       // 6: protocol.DeployTask
-	nil,                      // 7: protocol.DeployTask.EnvEntry
+	(*UpdateAgentTask)(nil),  // 7: protocol.UpdateAgentTask
+	nil,                      // 8: protocol.DeployTask.EnvEntry
 }
 var file_pkg_proto_protocol_proto_depIdxs = []int32{
 	1, // 0: protocol.AgentMessage.register:type_name -> protocol.RegisterRequest
@@ -600,14 +664,15 @@ var file_pkg_proto_protocol_proto_depIdxs = []int32{
 	3, // 2: protocol.AgentMessage.progress:type_name -> protocol.TaskProgress
 	5, // 3: protocol.MasterMessage.register_response:type_name -> protocol.RegisterResponse
 	6, // 4: protocol.MasterMessage.deploy_task:type_name -> protocol.DeployTask
-	7, // 5: protocol.DeployTask.env:type_name -> protocol.DeployTask.EnvEntry
-	0, // 6: protocol.AgentService.Tunnel:input_type -> protocol.AgentMessage
-	4, // 7: protocol.AgentService.Tunnel:output_type -> protocol.MasterMessage
-	7, // [7:8] is the sub-list for method output_type
-	6, // [6:7] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	7, // 5: protocol.MasterMessage.update_agent_task:type_name -> protocol.UpdateAgentTask
+	8, // 6: protocol.DeployTask.env:type_name -> protocol.DeployTask.EnvEntry
+	0, // 7: protocol.AgentService.Tunnel:input_type -> protocol.AgentMessage
+	4, // 8: protocol.AgentService.Tunnel:output_type -> protocol.MasterMessage
+	8, // [8:9] is the sub-list for method output_type
+	7, // [7:8] is the sub-list for method input_type
+	7, // [7:7] is the sub-list for extension type_name
+	7, // [7:7] is the sub-list for extension extendee
+	0, // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_pkg_proto_protocol_proto_init() }
@@ -623,6 +688,7 @@ func file_pkg_proto_protocol_proto_init() {
 	file_pkg_proto_protocol_proto_msgTypes[4].OneofWrappers = []any{
 		(*MasterMessage_RegisterResponse)(nil),
 		(*MasterMessage_DeployTask)(nil),
+		(*MasterMessage_UpdateAgentTask)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -630,7 +696,7 @@ func file_pkg_proto_protocol_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_proto_protocol_proto_rawDesc), len(file_pkg_proto_protocol_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
