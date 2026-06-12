@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	projectNameRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
-	domainRegex      = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
+	ProjectNameRegex = regexp.MustCompile(`^[a-z0-9-]+$`)
+	DomainRegex      = regexp.MustCompile(`^[a-zA-Z0-9.-]+$`)
 )
 
 // RoutingConfig holds domain and port info for routing
@@ -39,7 +39,7 @@ func ValidateDeployConfig(data []byte) (*DeployConfig, error) {
 	if len(cfg.ProjectName) > 63 {
 		return nil, errors.New("project_name cannot exceed 63 characters")
 	}
-	if !projectNameRegex.MatchString(cfg.ProjectName) {
+	if !ProjectNameRegex.MatchString(cfg.ProjectName) {
 		return nil, fmt.Errorf("project_name '%s' is invalid (only lowercase letters, numbers, and hyphens allowed)", cfg.ProjectName)
 	}
 
@@ -47,7 +47,7 @@ func ValidateDeployConfig(data []byte) (*DeployConfig, error) {
 	if cfg.Routing.Domain == "" {
 		return nil, errors.New("routing domain is required")
 	}
-	if !domainRegex.MatchString(cfg.Routing.Domain) {
+	if !DomainRegex.MatchString(cfg.Routing.Domain) {
 		return nil, fmt.Errorf("routing domain '%s' contains invalid characters", cfg.Routing.Domain)
 	}
 

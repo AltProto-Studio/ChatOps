@@ -35,6 +35,13 @@ type UserConversationState struct {
 	DeployDomain    string
 	DeployCFDNSType string // "proxy", "dns", "none"
 	DeployUseSSL    bool
+
+	// Temporary SSH node addition wizard properties
+	SSHHost      string
+	SSHPort      int
+	SSHUser      string
+	SSHAuth      string // Password or private key
+	SSHNodeAlias string
 }
 
 // DeploymentSession stores details of an ongoing deploy task for Telegram updates
@@ -446,6 +453,171 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			return
 		}
 
+		if state.Step == "WAITING_FOR_SSH_HOST" {
+			b.userStatesMu.Lock()
+			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
+			b.userStatesMu.Unlock()
+
+			host := strings.TrimSpace(text)
+			if host == "" || strings.Contains(host, " ") {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ IP/主机名格式错误，请重新输入:")
+				return
+			}
+
+			b.userStatesMu.Lock()
+			state.SSHHost = host
+			state.UpdatedAt = time.Now()
+			b.userStatesMu.Unlock()
+
+			portsKeyboard := tgbotapi.NewReplyKeyboard(
+				tgbotapi.NewKeyboardButtonRow(
+					tgbotapi.NewKeyboardButton("22"),
+					tgbotapi.NewKeyboardButton("❌ 取消操作"),
+				),
+			)
+			portsKeyboard.ResizeKeyboard = true
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_SSH_PORT", "🔌 请选择或输入 SSH 端口号 (默认 22):", portsKeyboard)
+			return
+		}
+
+		if state.Step == "WAITING_FOR_SSH_PORT" {
+			b.userStatesMu.Lock()
+			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
+			b.userStatesMu.Unlock()
+
+			portVal := strings.TrimSpace(text)
+			port := 22
+			if portVal != "" {
+				var p int
+				_, err := fmt.Sscanf(portVal, "%d", &p)
+				if err != nil || p <= 0 || p > 65535 {
+					b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 端口号无效，请输入 1 到 65535 之间的数字:")
+					return
+				}
+				port = p
+			}
+
+			b.userStatesMu.Lock()
+			state.SSHPort = port
+			state.UpdatedAt = time.Now()
+			b.userStatesMu.Unlock()
+
+			usersKeyboard := tgbotapi.NewReplyKeyboard(
+				tgbotapi.NewKeyboardButtonRow(
+					tgbotapi.NewKeyboardButton("root"),
+					tgbotapi.NewKeyboardButton("❌ 取消操作"),
+				),
+			)
+			usersKeyboard.ResizeKeyboard = true
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_SSH_USER", "👤 请选择或输入 SSH 用户名 (默认 root):", usersKeyboard)
+			return
+		}
+
+		if state.Step == "WAITING_FOR_SSH_USER" {
+			b.userStatesMu.Lock()
+			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
+			b.userStatesMu.Unlock()
+
+			userVal := strings.TrimSpace(text)
+			if userVal == "" {
+				userVal = "root"
+			}
+
+			b.userStatesMu.Lock()
+			state.SSHUser = userVal
+			state.UpdatedAt = time.Now()
+			b.userStatesMu.Unlock()
+
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_SSH_AUTH", "🔑 请发送 SSH 登录密码 或 私钥 PEM 证书内容:\n\n*(提示：系统将在收到后立即物理删除该条消息，绝对安全)*", b.getCancelKeyboard())
+			return
+		}
+
+		if state.Step == "WAITING_FOR_SSH_AUTH" {
+			b.deleteMessage(chatID, msgID)
+
+			authVal := text
+			if authVal == "" {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 密码或私钥不能为空，请重新发送:")
+				return
+			}
+
+			b.userStatesMu.Lock()
+			state.SSHAuth = authVal
+			state.UpdatedAt = time.Now()
+			b.userStatesMu.Unlock()
+
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_SSH_ALIAS", "🏷️ 请输入新服务器的节点别名 (例如 hk-node-1):", b.getCancelKeyboard())
+			return
+		}
+
+		if state.Step == "WAITING_FOR_SSH_ALIAS" {
+			b.userStatesMu.Lock()
+			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
+			b.userStatesMu.Unlock()
+
+			aliasVal := strings.TrimSpace(text)
+			if aliasVal == "" || len(aliasVal) > 63 || !types.ProjectNameRegex.MatchString(aliasVal) {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 别名无效（仅允许小写字母、数字和横线，长度不超过 63 字），请重新输入:")
+				return
+			}
+
+			_, err := b.dbManager.GetNode(aliasVal)
+			if err == nil {
+				b.sendErrorReplyWithCancel(chatID, fromUID, fmt.Sprintf("❌ 节点别名 `%s` 已存在，请重新输入另一个别名:", aliasVal))
+				return
+			}
+
+			b.userStatesMu.Lock()
+			state.SSHNodeAlias = aliasVal
+			state.UpdatedAt = time.Now()
+			b.userStatesMu.Unlock()
+
+			addr := b.gRPCServer.addr
+			displayAddr := addr
+			if strings.HasPrefix(addr, "127.0.0.1") || strings.HasPrefix(addr, "0.0.0.0") || strings.HasPrefix(addr, ":") {
+				displayAddr = "YOUR_MASTER_PUBLIC_IP" + strings.TrimPrefix(addr, "127.0.0.1")
+				displayAddr = strings.TrimPrefix(displayAddr, "0.0.0.0")
+				displayAddr = strings.TrimPrefix(displayAddr, ":")
+				if !strings.Contains(displayAddr, ":") {
+					displayAddr = "YOUR_MASTER_PUBLIC_IP:50051"
+				}
+			}
+
+			masterKeyboard := tgbotapi.NewReplyKeyboard(
+				tgbotapi.NewKeyboardButtonRow(
+					tgbotapi.NewKeyboardButton(displayAddr),
+					tgbotapi.NewKeyboardButton("❌ 取消操作"),
+				),
+			)
+			masterKeyboard.ResizeKeyboard = true
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_SSH_MASTER_IP", "🌐 请确认或输入 Master 对外公网 IP (或域名) 供 Agent 连接:", masterKeyboard)
+			return
+		}
+
+		if state.Step == "WAITING_FOR_SSH_MASTER_IP" {
+			b.deleteMessage(chatID, msgID)
+
+			masterAddrVal := strings.TrimSpace(text)
+			if masterAddrVal == "" || strings.Contains(masterAddrVal, "YOUR_MASTER_PUBLIC_IP") {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ IP 地址无效，请输入实际的可访问公网 IP/域名及端口:")
+				return
+			}
+
+			b.userStatesMu.Lock()
+			delete(b.userStates, fromUID)
+			b.userStatesMu.Unlock()
+
+			if state.PromptMsgID > 0 {
+				b.deleteMessage(chatID, state.PromptMsgID)
+			}
+			for _, id := range state.UserMsgIDs {
+				b.deleteMessage(chatID, id)
+			}
+
+			go b.startSSHDeployProcess(chatID, user, state, masterAddrVal)
+			return
+		}
+
 		if state.Step == "WAITING_FOR_CUSTOM_INVITE_USES" {
 			b.userStatesMu.Lock()
 			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
@@ -741,46 +913,8 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			return
 		}
 
-		addr := b.gRPCServer.addr
-		displayAddr := addr
-		if strings.HasPrefix(addr, "127.0.0.1") || strings.HasPrefix(addr, "0.0.0.0") || strings.HasPrefix(addr, ":") {
-			displayAddr = "YOUR_MASTER_PUBLIC_IP" + strings.TrimPrefix(addr, "127.0.0.1")
-			displayAddr = strings.TrimPrefix(displayAddr, "0.0.0.0")
-			displayAddr = strings.TrimPrefix(displayAddr, ":")
-			if !strings.Contains(displayAddr, ":") {
-				displayAddr = "YOUR_MASTER_PUBLIC_IP:50051"
-			}
-		}
-
-		tlsFlags := ""
-		tlsHint := ""
-		if b.gRPCServer.tlsEnabled {
-			tlsFlags = " -tls-enabled=true"
-			if b.gRPCServer.tlsCertPath == "" && b.gRPCServer.tlsKeyPath == "" {
-				tlsFlags += " -tls-skip-verify=true"
-				tlsHint = "\n🔒 *安全说明*：由于 Master 正在使用内置的内存自签名 TLS 证书，生成的 Agent 命令已自动添加 `-tls-skip-verify=true` 来跳过证书链校验，但通信内容依然是端到端 TLS 强加密的。"
-			} else {
-				tlsHint = "\n🔒 *安全说明*：由于 Master 正在使用您的自定义 TLS 证书，请确保将相应的 CA 证书拷贝至 Agent 机器上，并在启动命令后添加 `-tls-ca [ca证书路径]` 以进行对端身份验证。"
-			}
-		}
-
-		var sb strings.Builder
-		sb.WriteString("➕ **添加新服务器 (零配置快速集成)**\n")
-		sb.WriteString("————————————————————\n")
-		sb.WriteString("请将以下命令复制到新节点的终端中运行，即可拉起被控端并注册至当前集群：\n\n")
-		sb.WriteString("👉 **Windows 终端一键启动**:\n")
-		sb.WriteString(fmt.Sprintf("`.\\gopass-agent.exe -master %s -token %s -alias 新服务器别名%s`\n\n", displayAddr, b.token, tlsFlags))
-		sb.WriteString("👉 **Linux 终端一键启动**:\n")
-		sb.WriteString(fmt.Sprintf("`./gopass-agent -master %s -token %s -alias 新服务器别名%s`\n\n", displayAddr, b.token, tlsFlags))
-		sb.WriteString("💡 *提示*：请将命令中的 `YOUR_MASTER_PUBLIC_IP` 替换为您 Master 控制端服务的实际公网公有 IP 地址。")
-		if tlsHint != "" {
-			sb.WriteString(tlsHint)
-		}
-
-		msgCfg := tgbotapi.NewMessage(chatID, sb.String())
-		msgCfg.ParseMode = "Markdown"
-		msgCfg.ReplyMarkup = b.getMainMenuMarkup(user)
-		_, _ = b.api.Send(msgCfg)
+		b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_SSH_HOST", "🖥️ 请输入目标服务器的 IP 地址 (例如 192.168.1.100):", b.getCancelKeyboard())
+		return
 
 	case text == "👥 账户管理":
 		b.deleteMessage(chatID, msgID)
@@ -1820,4 +1954,77 @@ func extractUIDFromButton(text string) (int64, error) {
 		return strconv.ParseInt(inner, 10, 64)
 	}
 	return 0, fmt.Errorf("cannot extract UID from: %s", text)
+}
+
+func (b *Bot) startSSHDeployProcess(chatID int64, user *types.User, state *UserConversationState, masterAddr string) {
+	statusMsg, err := b.api.Send(tgbotapi.NewMessage(chatID, "⏳ **[1/3] 正在本地交叉编译 Linux 被控端...**"))
+	var statusMsgID int
+	if err == nil {
+		statusMsgID = statusMsg.MessageID
+	}
+
+	updateStatus := func(text string) {
+		if statusMsgID > 0 {
+			msg := tgbotapi.NewEditMessageText(chatID, statusMsgID, text)
+			msg.ParseMode = "Markdown"
+			_, _ = b.api.Send(msg)
+		} else {
+			log.Printf("[Bot Status] %s", text)
+		}
+	}
+
+	// Step 1: Compile agent for Linux
+	agentBin, err := CompileAgentForLinux()
+	if err != nil {
+		updateStatus(fmt.Sprintf("❌ **编译失败**\n\n项目在本地交叉编译 Linux 程序时出错:\n`%v`", err))
+		return
+	}
+
+	// Step 2: SSH Upload and Deploy
+	updateStatus("⏳ **[2/3] 编译成功。正在通过 SSH 安全信道上传并启动被控端...**")
+
+	isPrivateKey := strings.Contains(state.SSHAuth, "-----BEGIN")
+	var password, privateKey string
+	if isPrivateKey {
+		privateKey = state.SSHAuth
+	} else {
+		password = state.SSHAuth
+	}
+
+	err = DeployAgentToRemote(
+		state.SSHHost,
+		state.SSHPort,
+		state.SSHUser,
+		password,
+		privateKey,
+		agentBin,
+		masterAddr,
+		b.token,
+		state.SSHNodeAlias,
+		b.gRPCServer.tlsEnabled,
+		b.gRPCServer.tlsCertPath == "" && b.gRPCServer.tlsKeyPath == "",
+	)
+	if err != nil {
+		updateStatus(fmt.Sprintf("❌ **部署失败**\n\nSSH 安装被控端出错:\n`%v`", err))
+		return
+	}
+
+	// Step 3: Wait for registration handshake
+	updateStatus("⏳ **[3/3] 安装成功。正在等待 gRPC 握手与安全 TLS 通信建立...**")
+
+	success := false
+	for i := 0; i < 15; i++ {
+		time.Sleep(1 * time.Second)
+		node, err := b.dbManager.GetNode(state.SSHNodeAlias)
+		if err == nil && node.Connected {
+			success = true
+			break
+		}
+	}
+
+	if success {
+		updateStatus(fmt.Sprintf("🎉 **新节点安全联通！**\n\n被控端节点 `[ %s ]` 已成功通过 TLS 安全加密信道接入 Master 并正常开始心跳上报！", state.SSHNodeAlias))
+	} else {
+		updateStatus(fmt.Sprintf("❌ **联通超时**\n\n被控端程序已在远程主机启动，但未能在 15 秒内回连至 Master。\n\n请检查：\n1. 目标服务器与 Master (%s) 之间的网络连通性及防火墙端口规则。\n2. 远程主机上的日志文件 `~/gopass-agent.log`。", masterAddr))
+	}
 }
