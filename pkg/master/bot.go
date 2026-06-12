@@ -1137,6 +1137,11 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 		release, err := FetchLatestRelease(b.githubToken)
 		if err != nil {
+			if errors.Is(err, ErrNoReleaseFound) {
+				msgText := fmt.Sprintf("✨ **当前已是最新版本 (%s)！**\n\nGitHub 上未发现任何发布版本。", types.CurrentVersion)
+				b.updateWizardPrompt(chatID, fromUID, "IDLE", msgText, b.getMainMenuMarkup(user))
+				return
+			}
 			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 检查更新失败：" + err.Error(), b.getMainMenuMarkup(user))
 			return
 		}
@@ -1217,6 +1222,10 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 		
 		release, err := FetchLatestRelease(b.githubToken)
 		if err != nil {
+			if errors.Is(err, ErrNoReleaseFound) {
+				b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 无法获取最新 Release：GitHub 未发布任何 Release 版本，请先发布 Release 后再试。", b.getMainMenuMarkup(user))
+				return
+			}
 			b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 无法获取最新 Release: " + err.Error(), b.getMainMenuMarkup(user))
 			return
 		}
