@@ -752,15 +752,30 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			}
 		}
 
+		tlsFlags := ""
+		tlsHint := ""
+		if b.gRPCServer.tlsEnabled {
+			tlsFlags = " -tls-enabled=true"
+			if b.gRPCServer.tlsCertPath == "" && b.gRPCServer.tlsKeyPath == "" {
+				tlsFlags += " -tls-skip-verify=true"
+				tlsHint = "\n🔒 *安全说明*：由于 Master 正在使用内置的内存自签名 TLS 证书，生成的 Agent 命令已自动添加 `-tls-skip-verify=true` 来跳过证书链校验，但通信内容依然是端到端 TLS 强加密的。"
+			} else {
+				tlsHint = "\n🔒 *安全说明*：由于 Master 正在使用您的自定义 TLS 证书，请确保将相应的 CA 证书拷贝至 Agent 机器上，并在启动命令后添加 `-tls-ca [ca证书路径]` 以进行对端身份验证。"
+			}
+		}
+
 		var sb strings.Builder
 		sb.WriteString("➕ **添加新服务器 (零配置快速集成)**\n")
 		sb.WriteString("————————————————————\n")
 		sb.WriteString("请将以下命令复制到新节点的终端中运行，即可拉起被控端并注册至当前集群：\n\n")
 		sb.WriteString("👉 **Windows 终端一键启动**:\n")
-		sb.WriteString(fmt.Sprintf("`.\\gopass-agent.exe -master %s -token %s -alias 新服务器别名`\n\n", displayAddr, b.token))
+		sb.WriteString(fmt.Sprintf("`.\\gopass-agent.exe -master %s -token %s -alias 新服务器别名%s`\n\n", displayAddr, b.token, tlsFlags))
 		sb.WriteString("👉 **Linux 终端一键启动**:\n")
-		sb.WriteString(fmt.Sprintf("`./gopass-agent -master %s -token %s -alias 新服务器别名`\n\n", displayAddr, b.token))
+		sb.WriteString(fmt.Sprintf("`./gopass-agent -master %s -token %s -alias 新服务器别名%s`\n\n", displayAddr, b.token, tlsFlags))
 		sb.WriteString("💡 *提示*：请将命令中的 `YOUR_MASTER_PUBLIC_IP` 替换为您 Master 控制端服务的实际公网公有 IP 地址。")
+		if tlsHint != "" {
+			sb.WriteString(tlsHint)
+		}
 
 		msgCfg := tgbotapi.NewMessage(chatID, sb.String())
 		msgCfg.ParseMode = "Markdown"
