@@ -1,11 +1,15 @@
 # Release History & Version Logs
 
-<p align="center">
-  <a href="README.md">🇺🇸 English</a> |
-  <a href="README.zh-CN.md">🇨🇳 简体中文</a> |
-  <a href="LICENSE.md">⚖️ License Audit</a> |
-  <b>🏷️ Releases</b>
-</p>
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center"><a href="README.md">🇺🇸 English</a></th>
+      <th align="center"><a href="README.zh-CN.md">🇨🇳 简体中文</a></th>
+      <th align="center"><a href="LICENSE.md">⚖️ License Audit</a></th>
+      <th align="center">🟢 Releases</th>
+    </tr>
+  </thead>
+</table>
 
 ---
 

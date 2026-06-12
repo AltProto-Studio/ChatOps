@@ -1,11 +1,15 @@
 # ChatOps - 极简无痕 Telegram 运维控制系统
 
-<p align="center">
-  <a href="README.md">🇺🇸 English</a> |
-  <b>🇨🇳 简体中文</b> |
-  <a href="LICENSE.md">⚖️ License Audit</a> |
-  <a href="CHANGELOG.md">🏷️ Releases</a>
-</p>
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center"><a href="README.md">🇺🇸 English</a></th>
+      <th align="center">🟢 简体中文</th>
+      <th align="center"><a href="LICENSE.md">⚖️ License Audit</a></th>
+      <th align="center"><a href="CHANGELOG.md">🏷️ Releases</a></th>
+    </tr>
+  </thead>
+</table>
 
 ---
 

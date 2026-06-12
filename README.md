@@ -1,11 +1,15 @@
 # ChatOps - Sleek & Minimalist Telegram Operations Control System
 
-<p align="center">
-  <b>🇺🇸 English</b> |
-  <a href="README.zh-CN.md">🇨🇳 简体中文</a> |
-  <a href="LICENSE.md">⚖️ License Audit</a> |
-  <a href="CHANGELOG.md">🏷️ Releases</a>
-</p>
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center">🟢 English</th>
+      <th align="center"><a href="README.zh-CN.md">🇨🇳 简体中文</a></th>
+      <th align="center"><a href="LICENSE.md">⚖️ License Audit</a></th>
+      <th align="center"><a href="CHANGELOG.md">🏷️ Releases</a></th>
+    </tr>
+  </thead>
+</table>
 
 ---
 

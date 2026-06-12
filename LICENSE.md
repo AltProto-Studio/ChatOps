@@ -1,11 +1,15 @@
 # Open Source License & Compliance Audit
 
-<p align="center">
-  <a href="README.md">🇺🇸 English</a> |
-  <a href="README.zh-CN.md">🇨🇳 简体中文</a> |
-  <b>⚖️ License Audit</b> |
-  <a href="CHANGELOG.md">🏷️ Releases</a>
-</p>
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center"><a href="README.md">🇺🇸 English</a></th>
+      <th align="center"><a href="README.zh-CN.md">🇨🇳 简体中文</a></th>
+      <th align="center">🟢 License Audit</th>
+      <th align="center"><a href="CHANGELOG.md">🏷️ Releases</a></th>
+    </tr>
+  </thead>
+</table>
 
 ---
 
