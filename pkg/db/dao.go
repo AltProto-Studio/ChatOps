@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"gopass/pkg/crypto"
 	"gopass/pkg/types"
 
 	bolt "go.etcd.io/bbolt"
@@ -96,7 +97,8 @@ func (m *Manager) SaveToken(token *types.Token) error {
 		if err != nil {
 			return fmt.Errorf("failed to marshal token: %w", err)
 		}
-		return b.Put([]byte(token.Hash), data)
+		encrypted := crypto.Encrypt(data)
+		return b.Put([]byte(token.Hash), encrypted)
 	})
 }
 
@@ -109,7 +111,11 @@ func (m *Manager) GetToken(hash string) (*types.Token, error) {
 		if val == nil {
 			return ErrNotFound
 		}
-		return json.Unmarshal(val, &token)
+		decrypted, err := crypto.Decrypt(val)
+		if err != nil {
+			decrypted = val
+		}
+		return json.Unmarshal(decrypted, &token)
 	})
 	if err != nil {
 		return nil, err
@@ -129,7 +135,11 @@ func (m *Manager) UseToken(hash string, subUID int64) error {
 		}
 
 		var token types.Token
-		if err := json.Unmarshal(val, &token); err != nil {
+		decrypted, err := crypto.Decrypt(val)
+		if err != nil {
+			decrypted = val
+		}
+		if err := json.Unmarshal(decrypted, &token); err != nil {
 			return fmt.Errorf("failed to unmarshal token: %w", err)
 		}
 
@@ -138,14 +148,15 @@ func (m *Manager) UseToken(hash string, subUID int64) error {
 			return ErrTokenMaxReached
 		}
 
-		// 3. Update token usage count
+		// 3. Update token usage
 		token.UsedCount++
-		updatedTokenData, err := json.Marshal(&token)
+		newData, err := json.Marshal(token)
 		if err != nil {
 			return fmt.Errorf("failed to marshal updated token: %w", err)
 		}
-		if err := tb.Put([]byte(hash), updatedTokenData); err != nil {
-			return fmt.Errorf("failed to save updated token: %w", err)
+		encryptedToken := crypto.Encrypt(newData)
+		if err := tb.Put([]byte(hash), encryptedToken); err != nil {
+			return fmt.Errorf("failed to update token: %w", err)
 		}
 
 		// 4. Save/register sub user
@@ -264,7 +275,8 @@ func (m *Manager) GetAdminUID() (int64, error) {
 func (m *Manager) SetCommunicationToken(token string) error {
 	return m.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(BucketConfig)
-		return b.Put([]byte("communication_token"), []byte(token))
+		encrypted := crypto.Encrypt([]byte(token))
+		return b.Put([]byte("communication_token"), encrypted)
 	})
 }
 
@@ -277,7 +289,13 @@ func (m *Manager) GetCommunicationToken() (string, error) {
 		if val == nil {
 			return ErrNotFound
 		}
-		token = string(val)
+		decrypted, err := crypto.Decrypt(val)
+		if err != nil {
+			// Fallback to plaintext if decrypt fails
+			token = string(val)
+		} else {
+			token = string(decrypted)
+		}
 		return nil
 	})
 	if err != nil {
@@ -293,7 +311,11 @@ func (m *Manager) ListTokens() ([]*types.Token, error) {
 		b := tx.Bucket(BucketTokens)
 		return b.ForEach(func(k, v []byte) error {
 			var t types.Token
-			if err := json.Unmarshal(v, &t); err != nil {
+			decrypted, err := crypto.Decrypt(v)
+			if err != nil {
+				decrypted = v
+			}
+			if err := json.Unmarshal(decrypted, &t); err != nil {
 				return err
 			}
 			tokens = append(tokens, &t)
@@ -317,7 +339,8 @@ func (m *Manager) SaveCFConfig(config *types.CFConfig) error {
 		if err != nil {
 			return fmt.Errorf("failed to marshal cf config: %w", err)
 		}
-		return b.Put([]byte(config.ID), data)
+		encrypted := crypto.Encrypt(data)
+		return b.Put([]byte(config.ID), encrypted)
 	})
 }
 
@@ -330,7 +353,12 @@ func (m *Manager) GetCFConfig(id string) (*types.CFConfig, error) {
 		if val == nil {
 			return ErrNotFound
 		}
-		return json.Unmarshal(val, &config)
+		decrypted, err := crypto.Decrypt(val)
+		if err != nil {
+			// Fallback to plaintext
+			decrypted = val
+		}
+		return json.Unmarshal(decrypted, &config)
 	})
 	if err != nil {
 		return nil, err
@@ -345,7 +373,11 @@ func (m *Manager) ListCFConfigs() ([]*types.CFConfig, error) {
 		b := tx.Bucket(BucketCFConfigs)
 		return b.ForEach(func(k, v []byte) error {
 			var c types.CFConfig
-			if err := json.Unmarshal(v, &c); err != nil {
+			decrypted, err := crypto.Decrypt(v)
+			if err != nil {
+				decrypted = v // Fallback to plaintext
+			}
+			if err := json.Unmarshal(decrypted, &c); err != nil {
 				return err
 			}
 			configs = append(configs, &c)

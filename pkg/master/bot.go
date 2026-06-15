@@ -50,6 +50,10 @@ type UserConversationState struct {
 	CFZone  string
 	CFName  string
 
+	CFR2AccessKeyID     string
+	CFR2SecretAccessKey string
+	CFR2Endpoint        string
+
 	TargetUID int64 // Used for CF Allocation and Admin setup
 }
 
@@ -783,9 +787,43 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
 			b.userStatesMu.Unlock()
 
+			apiTokenRegex := regexp.MustCompile(`您的 API 令牌\s*([A-Za-z0-9_-]+)`)
+			accessKeyRegex := regexp.MustCompile(`访问密钥 ID\s*([A-Za-z0-9]+)`)
+			secretKeyRegex := regexp.MustCompile(`秘密访问密钥\s*([A-Za-z0-9]+)`)
+			endpointRegex := regexp.MustCompile(`S3 API 端点\s*(https://[A-Za-z0-9.-]+)`)
+
+			apiTokenMatch := apiTokenRegex.FindStringSubmatch(text)
+			accessKeyMatch := accessKeyRegex.FindStringSubmatch(text)
+			secretKeyMatch := secretKeyRegex.FindStringSubmatch(text)
+			endpointMatch := endpointRegex.FindStringSubmatch(text)
+
+			if len(apiTokenMatch) > 1 {
+				b.userStatesMu.Lock()
+				state.CFToken = apiTokenMatch[1]
+				if len(accessKeyMatch) > 1 {
+					state.CFR2AccessKeyID = accessKeyMatch[1]
+				}
+				if len(secretKeyMatch) > 1 {
+					state.CFR2SecretAccessKey = secretKeyMatch[1]
+				}
+				if len(endpointMatch) > 1 {
+					state.CFR2Endpoint = endpointMatch[1]
+				}
+				b.userStatesMu.Unlock()
+
+				msg := "✅ 成功提取 API Token！"
+				if len(accessKeyMatch) > 1 && len(secretKeyMatch) > 1 {
+					msg = "✅ 成功智能解析 API Token 及 R2 (S3) 对象存储凭证！"
+				}
+				msg += "\n接下来，请输入 Cloudflare Zone ID："
+
+				b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CF_ZONE", msg, b.getCancelKeyboard())
+				return
+			}
+
 			token := strings.TrimSpace(text)
 			if token == "" || strings.Contains(token, " ") {
-				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ Token 格式错误，请重新输入:")
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ Token 格式错误或未识别到所需字段，请重新输入:")
 				return
 			}
 
@@ -832,12 +870,15 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			cfID := fmt.Sprintf("%X-%d", buf, time.Now().UnixNano())
 
 			config := &types.CFConfig{
-				ID:        cfID,
-				Name:      name,
-				APIToken:  state.CFToken,
-				ZoneID:    state.CFZone,
-				CreatedBy: fromUID,
-				CreatedAt: time.Now(),
+				ID:                cfID,
+				Name:              name,
+				APIToken:          state.CFToken,
+				ZoneID:            state.CFZone,
+				R2AccessKeyID:     state.CFR2AccessKeyID,
+				R2SecretAccessKey: state.CFR2SecretAccessKey,
+				R2Endpoint:        state.CFR2Endpoint,
+				CreatedBy:         fromUID,
+				CreatedAt:         time.Now(),
 			}
 
 			err := b.dbManager.SaveCFConfig(config)
