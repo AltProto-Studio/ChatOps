@@ -3,10 +3,13 @@
 *.exe~
 /gopass-master
 /gopass-agent
+/build/
+/dist/
 
 # Local configs (containing real credentials and tokens)
 master.yaml
 agent.yaml
+.gopass_secret.key
 
 # Local databases and logs
 *.db
@@ -17,15 +20,14 @@ Caddyfile
 .idea/
 .vscode/
 Thumbs.db
+.DS_Store
+
+# Debug, Tests, and Misc
+/debug/
+/test_demo/
+/cmd/test-e2e/
+/cmd/run-all/
+build.ps1
 
 # External tools and dependencies
 protoc-bin/
-
-# Test codes and directories
-cmd/test-e2e/
-cmd/run-all/
-pkg/db/db_test.go
-pkg/types/deploy_test.go
-
-# Project Documentation (per user request: "不要上传任何测试文件和文档")
-ChatOps.md
