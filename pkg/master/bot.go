@@ -2,7 +2,6 @@ package master
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -45,6 +44,13 @@ type UserConversationState struct {
 	SSHUser      string
 	SSHAuth      string // Password or private key
 	SSHNodeAlias string
+
+	// Temporary CF Config properties
+	CFToken string
+	CFZone  string
+	CFName  string
+
+	TargetUID int64 // Used for CF Allocation and Admin setup
 }
 
 // DeploymentSession stores details of an ongoing deploy task for Telegram updates
@@ -202,6 +208,23 @@ func (b *Bot) sendErrorReplyWithCancel(chatID int64, fromUID int64, text string)
 		}
 		b.userStatesMu.Unlock()
 	}
+}
+
+// hasPermission checks if a user is a master or an admin with the specific permission
+func (b *Bot) hasPermission(user *types.User, perm string) bool {
+	if user == nil {
+		return false
+	}
+	if user.Role == "master" {
+		return true // Master has all permissions
+	}
+	if user.Role == "admin" {
+		if user.Permissions == nil {
+			return false
+		}
+		return user.Permissions[perm]
+	}
+	return false
 }
 
 // HandleMessage routes and runs authorized commands and custom keyboard actions
@@ -439,46 +462,17 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 			choice := strings.ToLower(strings.TrimSpace(text))
 			if choice == "yes" || choice == "y" {
-				b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🔄 正在从 GitHub 下载最新 Master 更新包，请稍候...", nil)
+				buf := make([]byte, 2)
+				_, _ = rand.Read(buf)
+				captcha := fmt.Sprintf("%X", buf)
 
-				release, err := FetchLatestRelease(b.githubToken)
-				if err != nil {
-					b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 无法获取最新 Release: " + err.Error(), b.getMainMenuMarkup(user))
-					return
-				}
-
-				asset := release.GetMatchingAsset("master")
-				if asset == nil {
-					b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 未在 Release 资产中找到适配当前平台/架构的 Master 二进制文件！", b.getMainMenuMarkup(user))
-					return
-				}
-
-				b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "📥 正在下载新版本 Master 二进制...", nil)
-				err = DownloadAndReplaceBinary(asset, b.githubToken)
-				if err != nil {
-					b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 下载并替换二进制失败: " + err.Error(), b.getMainMenuMarkup(user))
-					return
-				}
-
-				b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🎉 Master 二进制更新成功！正在重新启动服务，本聊天会话将短暂断开。请在 3 秒后发送任意消息唤醒...", nil)
-				time.Sleep(1 * time.Second)
-
-				// Cleanup state
 				b.userStatesMu.Lock()
-				delete(b.userStates, fromUID)
+				state.Step = "WAITING_FOR_MASTER_UPDATE_CAPTCHA"
+				state.DeployGitURL = captcha // Reuse DeployGitURL to store captcha
 				b.userStatesMu.Unlock()
 
-				if state.PromptMsgID > 0 {
-					b.deleteMessage(chatID, state.PromptMsgID)
-				}
-				for _, id := range state.UserMsgIDs {
-					b.deleteMessage(chatID, id)
-				}
-
-				err = RestartProcess(b.dbManager, b.gRPCServer)
-				if err != nil {
-					b.reply(chatID, "❌ 重新启动服务失败: " + err.Error())
-				}
+				msgText := fmt.Sprintf("⚠️ **高危操作验证**\n为了防止误操作和越权执行，请回复以下信息以确认身份和意图：\n\n您的 UID: `%d`\n本次动态验证码: `%s`\n\n请严格按此格式回复 (中间用空格分隔): `UID 验证码`\n示例: `%d %s`", fromUID, captcha, fromUID, captcha)
+				b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_MASTER_UPDATE_CAPTCHA", msgText, b.getCancelKeyboard())
 				return
 
 			} else if choice == "no" || choice == "n" {
@@ -501,6 +495,72 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 输入无效。请手动输入 **yes** 或 **no** 确认是否升级 Master：")
 				return
 			}
+		}
+
+		if state.Step == "WAITING_FOR_MASTER_UPDATE_CAPTCHA" {
+			b.userStatesMu.Lock()
+			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
+			b.userStatesMu.Unlock()
+
+			expectedCaptcha := state.DeployGitURL
+			expectedText := fmt.Sprintf("%d %s", fromUID, expectedCaptcha)
+
+			if strings.TrimSpace(text) != expectedText {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 身份验证或验证码输入错误，请重新输入:")
+				return
+			}
+
+			// Log the action securely
+			logMsg := fmt.Sprintf("[%s] [SECURITY] Master upgrade initiated by user %d (%s)\n", time.Now().Format(time.RFC3339), fromUID, user.Name)
+			f, errLog := os.OpenFile("gopass-master.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if errLog == nil {
+				f.WriteString(logMsg)
+				f.Close()
+			} else {
+				log.Printf("Failed to write to master log: %v", errLog)
+			}
+
+			b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🔄 正在从 GitHub 下载最新 Master 更新包，请稍候...", nil)
+
+			release, err := FetchLatestRelease(b.githubToken)
+			if err != nil {
+				b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 无法获取最新 Release: "+err.Error(), b.getMainMenuMarkup(user))
+				return
+			}
+
+			asset := release.GetMatchingAsset("master")
+			if asset == nil {
+				b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 未在 Release 资产中找到适配当前平台/架构的 Master 二进制文件！", b.getMainMenuMarkup(user))
+				return
+			}
+
+			b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "📥 正在下载新版本 Master 二进制...", nil)
+			err = DownloadAndReplaceBinary(asset, b.githubToken)
+			if err != nil {
+				b.updateWizardPrompt(chatID, fromUID, "IDLE", "❌ 下载并替换二进制失败: "+err.Error(), b.getMainMenuMarkup(user))
+				return
+			}
+
+			b.updateWizardPrompt(chatID, fromUID, "UPGRADING_MASTER", "🎉 Master 二进制更新成功！正在重新启动服务，本聊天会话将短暂断开。请在 3 秒后发送任意消息唤醒...", nil)
+			time.Sleep(1 * time.Second)
+
+			// Cleanup state
+			b.userStatesMu.Lock()
+			delete(b.userStates, fromUID)
+			b.userStatesMu.Unlock()
+
+			if state.PromptMsgID > 0 {
+				b.deleteMessage(chatID, state.PromptMsgID)
+			}
+			for _, id := range state.UserMsgIDs {
+				b.deleteMessage(chatID, id)
+			}
+
+			err = RestartProcess(b.dbManager, b.gRPCServer)
+			if err != nil {
+				b.reply(chatID, "❌ 重新启动服务失败: "+err.Error())
+			}
+			return
 		}
 
 		if state.Step == "WAITING_FOR_GIT_URL" {
@@ -730,7 +790,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			}
 
 			b.userStatesMu.Lock()
-			state.DeployGitURL = token // 借用 GitURL 存 Token
+			state.CFToken = token
 			b.userStatesMu.Unlock()
 
 			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CF_ZONE", "☁️ 请输入 Cloudflare Zone ID:", b.getCancelKeyboard())
@@ -748,8 +808,39 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 				return
 			}
 
-			token := state.DeployGitURL
-			err := b.dbManager.SetCFConfig(token, zone)
+			b.userStatesMu.Lock()
+			state.CFZone = zone
+			b.userStatesMu.Unlock()
+
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CF_NAME", "☁️ 请输入此配置的备注名称 (例如：业务专用组A):", b.getCancelKeyboard())
+			return
+		}
+
+		if state.Step == "WAITING_FOR_CF_NAME" {
+			b.userStatesMu.Lock()
+			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
+			b.userStatesMu.Unlock()
+
+			name := strings.TrimSpace(text)
+			if name == "" {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 备注名称不能为空，请重新输入:")
+				return
+			}
+
+			buf := make([]byte, 8)
+			_, _ = rand.Read(buf)
+			cfID := fmt.Sprintf("%X-%d", buf, time.Now().UnixNano())
+
+			config := &types.CFConfig{
+				ID:        cfID,
+				Name:      name,
+				APIToken:  state.CFToken,
+				ZoneID:    state.CFZone,
+				CreatedBy: fromUID,
+				CreatedAt: time.Now(),
+			}
+
+			err := b.dbManager.SaveCFConfig(config)
 			
 			b.userStatesMu.Lock()
 			delete(b.userStates, fromUID)
@@ -763,10 +854,98 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 				if b.useMock {
 					log.Printf("[Bot Mock] REPLY: Cloudflare 配置保存成功！")
 				} else {
-					msg := tgbotapi.NewMessage(chatID, "🎉 **Cloudflare API 凭证配置保存成功！**\n系统将在后续部署中自动调用 API 绑定解析记录。")
+					msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("🎉 **Cloudflare API 凭证 '%s' 保存成功！**\n您可以在部署应用时选择使用此套配置。", name))
 					msg.ReplyMarkup = b.getMainMenuMarkup(user)
 					_, _ = b.api.Send(msg)
 				}
+			}
+			return
+		}
+
+		if state.Step == "WAITING_FOR_CF_ALLOCATE_USER" {
+			b.userStatesMu.Lock()
+			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
+			b.userStatesMu.Unlock()
+
+			uid, err := extractUIDFromButton(text)
+			if err != nil || uid <= 0 {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 用户 UID 输入无效，请重新输入:")
+				return
+			}
+
+			targetUser, err := b.dbManager.GetUser(uid)
+			if err != nil || targetUser == nil {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 找不到该用户，请重试:")
+				return
+			}
+
+			b.userStatesMu.Lock()
+			state.TargetUID = uid // Reuse TargetUID to store target user
+			b.userStatesMu.Unlock()
+
+			cfs, err := b.dbManager.ListCFConfigs()
+			if err != nil || len(cfs) == 0 {
+				b.userStatesMu.Lock()
+				delete(b.userStates, fromUID)
+				b.userStatesMu.Unlock()
+				b.clearConversationHistory(chatID, state)
+				b.reply(chatID, "⚠️ 系统中当前没有任何 Cloudflare 配置，请先添加配置。")
+				return
+			}
+
+			var buttons [][]tgbotapi.KeyboardButton
+			var row []tgbotapi.KeyboardButton
+			for i, cf := range cfs {
+				btnText := fmt.Sprintf("☁️ %s (%s)", cf.Name, cf.ID)
+				row = append(row, tgbotapi.NewKeyboardButton(btnText))
+				if (i+1)%2 == 0 {
+					buttons = append(buttons, row)
+					row = nil
+				}
+			}
+			if len(row) > 0 {
+				buttons = append(buttons, row)
+			}
+			buttons = append(buttons, []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("❌ 取消操作")})
+			replyMarkup := tgbotapi.NewReplyKeyboard(buttons...)
+			replyMarkup.ResizeKeyboard = true
+
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CF_ALLOCATE_CHOICE", fmt.Sprintf("🔧 **请为用户 %s (%d) 选择要分配的 Cloudflare 配置:**", targetUser.Name, targetUser.UID), replyMarkup)
+			return
+		}
+
+		if state.Step == "WAITING_FOR_CF_ALLOCATE_CHOICE" {
+			b.userStatesMu.Lock()
+			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
+			b.userStatesMu.Unlock()
+
+			// Extract CF ID
+			parts := strings.Split(text, "(")
+			if len(parts) < 2 {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 选择格式无效，请点击下方键盘按钮:")
+				return
+			}
+			cfID := strings.TrimSuffix(parts[len(parts)-1], ")")
+
+			targetUID := state.TargetUID
+			targetUser, err := b.dbManager.GetUser(targetUID)
+			
+			if err == nil && targetUser != nil {
+				targetUser.AssignedCF = cfID
+				err = b.dbManager.SaveUser(targetUser)
+			}
+
+			b.userStatesMu.Lock()
+			delete(b.userStates, fromUID)
+			b.userStatesMu.Unlock()
+			b.clearConversationHistory(chatID, state)
+
+			if err != nil {
+				b.reply(chatID, "❌ 分配配置失败: "+err.Error())
+			} else {
+				msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("🎉 **成功为用户分配 Cloudflare 配置！**\n该用户后续部署应用将默认使用这套网络配置。"))
+				msg.ReplyMarkup = b.getMainMenuMarkup(user)
+				_, _ = b.api.Send(msg)
 			}
 			return
 		}
@@ -822,24 +1001,96 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			}
 
 			targetUser.Role = "admin"
+			if targetUser.Permissions == nil {
+				targetUser.Permissions = make(map[string]bool)
+			}
+			errSave := b.dbManager.SaveUser(targetUser)
+
+			if errSave != nil {
+				b.clearConversationHistory(chatID, state)
+				b.userStatesMu.Lock()
+				delete(b.userStates, fromUID)
+				b.userStatesMu.Unlock()
+				b.reply(chatID, "❌ 初始化管理员权限失败: "+errSave.Error())
+				return
+			}
+
+			b.userStatesMu.Lock()
+			state.Step = "WAITING_FOR_ADMIN_PERMS"
+			state.TargetUID = uid // Reuse TargetUID to pass target user ID
+			b.userStatesMu.Unlock()
+
+			permMsg := fmt.Sprintf("👑 **正在为管理员 (UID: %d) 分配细粒度权限**\n请回复所需权限的数字编号（多个请用逗号分隔，例如 1,2,4）：\n" +
+				"1. ☁️ 配置 Cloudflare\n" +
+				"2. 🔧 分配 Cloudflare\n" +
+				"3. 🔍 检查更新\n" +
+				"4. 🔑 邀请新人\n" +
+				"5. 👑 设置管理员", uid)
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_ADMIN_PERMS", permMsg, b.getCancelKeyboard())
+			return
+		}
+
+		if state.Step == "WAITING_FOR_ADMIN_PERMS" {
+			b.userStatesMu.Lock()
+			state.UserMsgIDs = append(state.UserMsgIDs, msgID)
+			b.userStatesMu.Unlock()
+
+			targetUID := state.TargetUID
+			targetUser, err := b.dbManager.GetUser(targetUID)
+			if err != nil || targetUser == nil {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 找不到目标用户，请重试:")
+				return
+			}
+
+			perms := strings.Split(text, ",")
+			if targetUser.Permissions == nil {
+				targetUser.Permissions = make(map[string]bool)
+			}
+			
+			// Clear old
+			for k := range targetUser.Permissions {
+				delete(targetUser.Permissions, k)
+			}
+
+			for _, p := range perms {
+				p = strings.TrimSpace(p)
+				switch p {
+				case "1":
+					if b.hasPermission(user, types.PermCFConfig) {
+						targetUser.Permissions[types.PermCFConfig] = true
+					}
+				case "2":
+					if b.hasPermission(user, types.PermCFAllocate) {
+						targetUser.Permissions[types.PermCFAllocate] = true
+					}
+				case "3":
+					if b.hasPermission(user, types.PermCheckUpdate) {
+						targetUser.Permissions[types.PermCheckUpdate] = true
+					}
+				case "4":
+					if b.hasPermission(user, types.PermInvite) {
+						targetUser.Permissions[types.PermInvite] = true
+					}
+				case "5":
+					if b.hasPermission(user, types.PermSetAdmin) {
+						targetUser.Permissions[types.PermSetAdmin] = true
+					}
+				}
+			}
+
 			errSave := b.dbManager.SaveUser(targetUser)
 
 			b.userStatesMu.Lock()
 			delete(b.userStates, fromUID)
 			b.userStatesMu.Unlock()
-
 			b.clearConversationHistory(chatID, state)
 
 			if errSave != nil {
-				b.reply(chatID, "❌ 权限升级失败: "+errSave.Error())
+				b.reply(chatID, "❌ 权限保存失败: "+errSave.Error())
 			} else {
-				if b.useMock {
-					log.Printf("[Bot Mock] REPLY: 用户已升级为管理员。")
-				} else {
-					msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("👑 **已成功将子账户 (UID: `%d`) 升级为副管理员！**\n该账户现在已具备部署应用和生成邀请码等管理权限。", uid))
-					msg.ReplyMarkup = b.getMainMenuMarkup(user)
-					_, _ = b.api.Send(msg)
-				}
+				msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("🎉 **成功为副管理员 (UID: %d) 分配权限！**", targetUID))
+				msg.ReplyMarkup = b.getMainMenuMarkup(user)
+				_, _ = b.api.Send(msg)
 			}
 			return
 		}
@@ -870,25 +1121,32 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 				}
 			}
 
+			if targetUser.Permissions == nil {
+				targetUser.Permissions = make(map[string]bool)
+			}
 			errSave := b.dbManager.SaveUser(targetUser)
 
+			if errSave != nil {
+				b.clearConversationHistory(chatID, state)
+				b.userStatesMu.Lock()
+				delete(b.userStates, fromUID)
+				b.userStatesMu.Unlock()
+				b.reply(chatID, "❌ 初始化管理员权限失败: "+errSave.Error())
+				return
+			}
+
 			b.userStatesMu.Lock()
-			delete(b.userStates, fromUID)
+			state.Step = "WAITING_FOR_ADMIN_PERMS"
+			state.TargetUID = uid // Reuse TargetUID to pass target user ID
 			b.userStatesMu.Unlock()
 
-			b.clearConversationHistory(chatID, state)
-
-			if errSave != nil {
-				b.reply(chatID, "❌ 直接增添管理员失败: "+errSave.Error())
-			} else {
-				if b.useMock {
-					log.Printf("[Bot Mock] REPLY: 直接增添管理员成功。")
-				} else {
-					msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("👑 **已成功直接将用户 (UID: `%d`) 增添为副管理员！**\n该账户现在已具备部署应用和生成邀请码等管理权限。", uid))
-					msg.ReplyMarkup = b.getMainMenuMarkup(user)
-					_, _ = b.api.Send(msg)
-				}
-			}
+			permMsg := fmt.Sprintf("👑 **正在为直接添加的管理员 (UID: %d) 分配细粒度权限**\n请回复所需权限的数字编号（多个请用逗号分隔，例如 1,2,4）：\n" +
+				"1. ☁️ 配置 Cloudflare\n" +
+				"2. 🔧 分配 Cloudflare\n" +
+				"3. 🔍 检查更新\n" +
+				"4. 🔑 邀请新人\n" +
+				"5. 👑 设置管理员", uid)
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_ADMIN_PERMS", permMsg, b.getCancelKeyboard())
 			return
 		}
 	}
@@ -916,8 +1174,8 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 		b.showNodeSelectionMenu(chatID, fromUID)
 
 	case text == "🔑 生成邀请码" || cmd == "/invite":
-		if user.Role != "master" && user.Role != "admin" {
-			b.reply(chatID, "❌ 权限不足。仅管理员可生成邀请码。")
+		if !b.hasPermission(user, types.PermInvite) {
+			b.reply(chatID, "❌ 权限不足。仅授权管理员可生成邀请码。")
 			return
 		}
 
@@ -997,16 +1255,16 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 	case text == "👥 账户管理":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" {
-			b.reply(chatID, "❌ 权限不足。仅最高管理员主账户可管理账户。")
+		if !b.hasPermission(user, types.PermSetAdmin) {
+			b.reply(chatID, "❌ 权限不足。仅授权管理员可管理账户。")
 			return
 		}
 		b.showAccountMenu(chatID, user)
 
 	case text == "📜 查看子账户":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" {
-			b.reply(chatID, "❌ 权限不足。仅最高管理员可查看账户。")
+		if !b.hasPermission(user, types.PermSetAdmin) {
+			b.reply(chatID, "❌ 权限不足。")
 			return
 		}
 
@@ -1048,7 +1306,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 	case text == "👑 设为管理员":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" {
+		if !b.hasPermission(user, types.PermSetAdmin) {
 			b.reply(chatID, "❌ 权限不足。")
 			return
 		}
@@ -1056,7 +1314,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 	case text == "➕ 增添管理员":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" {
+		if !b.hasPermission(user, types.PermSetAdmin) {
 			b.reply(chatID, "❌ 权限不足。")
 			return
 		}
@@ -1079,15 +1337,15 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 	case text == "⚙️ 更多功能":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" && user.Role != "admin" {
-			b.reply(chatID, "❌ 权限不足。仅管理员可访问配置板块。")
+		if user.Role != "master" {
+			b.reply(chatID, "❌ 权限不足。仅最高管理员可访问配置板块。")
 			return
 		}
 		b.showMoreFunctionsMenu(chatID, user)
 
 	case text == "☁️ 配置 Cloudflare":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" && user.Role != "admin" {
+		if !b.hasPermission(user, types.PermCFConfig) {
 			b.reply(chatID, "❌ 权限不足。")
 			return
 		}
@@ -1101,9 +1359,17 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 		b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CF_TOKEN", "☁️ 请输入 Cloudflare API Token:", b.getCancelKeyboard())
 
+	case text == "🔧 分配 Cloudflare":
+		b.deleteMessage(chatID, msgID)
+		if !b.hasPermission(user, types.PermCFAllocate) {
+			b.reply(chatID, "❌ 权限不足。")
+			return
+		}
+		b.showUserSelectionKeyboard(chatID, fromUID, "WAITING_FOR_CF_ALLOCATE_USER", "🔧 **请选择要分配 Cloudflare 配置的用户 UID:**")
+
 	case text == "📜 查看 Master 日志":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" && user.Role != "admin" {
+		if user.Role != "master" {
 			b.reply(chatID, "❌ 权限不足。")
 			return
 		}
@@ -1128,7 +1394,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 	case text == "🔍 检查更新":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" && user.Role != "admin" {
+		if !b.hasPermission(user, types.PermCheckUpdate) {
 			b.reply(chatID, "❌ 权限不足。")
 			return
 		}
@@ -1257,21 +1523,30 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 func (b *Bot) getMainMenuMarkup(user *types.User) tgbotapi.ReplyKeyboardMarkup {
 	var replyButtons [][]tgbotapi.KeyboardButton
-	if user != nil && user.Role == "master" {
-		row1 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🚀 部署应用"), tgbotapi.NewKeyboardButton("🔑 生成邀请码")}
-		row2 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🖥️ 节点状态"), tgbotapi.NewKeyboardButton("👥 账户管理")}
-		row3 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("⚙️ 更多功能"), tgbotapi.NewKeyboardButton("❌ 取消操作")}
-		replyButtons = append(replyButtons, row1, row2, row3)
-	} else if user != nil && user.Role == "admin" {
-		row1 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🚀 部署应用"), tgbotapi.NewKeyboardButton("🔑 生成邀请码")}
-		row2 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🖥️ 节点状态"), tgbotapi.NewKeyboardButton("⚙️ 更多功能")}
-		row3 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("❌ 取消操作")}
-		replyButtons = append(replyButtons, row1, row2, row3)
-	} else {
-		row1 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🚀 部署应用"), tgbotapi.NewKeyboardButton("🖥️ 节点状态")}
-		row2 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("❌ 取消操作")}
-		replyButtons = append(replyButtons, row1, row2)
+
+	// Default row for everyone
+	row1 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🚀 部署应用"), tgbotapi.NewKeyboardButton("🖥️ 节点状态")}
+
+	var row2 []tgbotapi.KeyboardButton
+	if b.hasPermission(user, types.PermInvite) {
+		row2 = append(row2, tgbotapi.NewKeyboardButton("🔑 生成邀请码"))
 	}
+	if b.hasPermission(user, types.PermSetAdmin) {
+		row2 = append(row2, tgbotapi.NewKeyboardButton("👥 账户管理"))
+	}
+
+	var row3 []tgbotapi.KeyboardButton
+	if user != nil && (user.Role == "master" || user.Role == "admin") {
+		// As long as they are admin, they might have some 'more functions'
+		row3 = append(row3, tgbotapi.NewKeyboardButton("⚙️ 更多功能"))
+	}
+	row3 = append(row3, tgbotapi.NewKeyboardButton("❌ 取消操作"))
+
+	replyButtons = append(replyButtons, row1)
+	if len(row2) > 0 {
+		replyButtons = append(replyButtons, row2)
+	}
+	replyButtons = append(replyButtons, row3)
 
 	replyMarkup := tgbotapi.NewReplyKeyboard(replyButtons...)
 	replyMarkup.ResizeKeyboard = true
@@ -1422,16 +1697,30 @@ func (b *Bot) showAccountMenu(chatID int64, user *types.User) {
 
 func (b *Bot) showMoreFunctionsMenu(chatID int64, user *types.User) {
 	var replyButtons [][]tgbotapi.KeyboardButton
-	row1 := []tgbotapi.KeyboardButton{
-		tgbotapi.NewKeyboardButton("☁️ 配置 Cloudflare"),
-		tgbotapi.NewKeyboardButton("📜 查看 Master 日志"),
-	}
-	row2 := []tgbotapi.KeyboardButton{
-		tgbotapi.NewKeyboardButton("🔍 检查更新"),
-		tgbotapi.NewKeyboardButton("⬅️ 返回主菜单"),
-	}
-	replyButtons = append(replyButtons, row1, row2)
 
+	var row1 []tgbotapi.KeyboardButton
+	if b.hasPermission(user, types.PermCFConfig) {
+		row1 = append(row1, tgbotapi.NewKeyboardButton("☁️ 配置 Cloudflare"))
+	}
+	if b.hasPermission(user, types.PermCFAllocate) {
+		row1 = append(row1, tgbotapi.NewKeyboardButton("🔧 分配 Cloudflare"))
+	}
+
+	var row2 []tgbotapi.KeyboardButton
+	if user != nil && user.Role == "master" {
+		row2 = append(row2, tgbotapi.NewKeyboardButton("📜 查看 Master 日志"))
+	}
+	if b.hasPermission(user, types.PermCheckUpdate) {
+		row2 = append(row2, tgbotapi.NewKeyboardButton("🔍 检查更新"))
+	}
+
+	if len(row1) > 0 {
+		replyButtons = append(replyButtons, row1)
+	}
+	if len(row2) > 0 {
+		replyButtons = append(replyButtons, row2)
+	}
+	replyButtons = append(replyButtons, []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("⬅️ 返回主菜单")})
 	replyMarkup := tgbotapi.NewReplyKeyboard(replyButtons...)
 	replyMarkup.ResizeKeyboard = true
 
@@ -1655,9 +1944,9 @@ func (b *Bot) HandleCallbackQuery(cb *tgbotapi.CallbackQuery) {
 }
 
 func (b *Bot) handleInvite(chatID int64, creatorUID int64, maxUses int) {
-	buf := make([]byte, 4)
+	buf := make([]byte, 8)
 	_, _ = rand.Read(buf)
-	activationCode := strings.ToUpper(hex.EncodeToString(buf))
+	activationCode := fmt.Sprintf("%X-%d", buf, time.Now().UnixNano())
 
 	tok := &types.Token{
 		Hash:      activationCode,
@@ -1850,20 +2139,29 @@ func (b *Bot) handleDeploySuccess(taskID string, session *DeploymentSession) {
 	b.editMessageDirect(session.ChatID, session.MessageID, "🎉 **部署成功！正在配置域名与 SSL...**")
 
 	if session.CFDNSType != "none" {
-		cfToken, cfZone, err := b.dbManager.GetCFConfig()
-		if err == nil && cfToken != "" && cfZone != "" {
-			node, nodeErr := b.dbManager.GetNode(session.NodeAlias)
-			if nodeErr == nil && node.IP != "" {
-				proxied := (session.CFDNSType == "proxy")
-				dnsClient := cloudflare.NewDNSClient(cfToken, cfZone)
-				dnsErr := dnsClient.CreateOrUpdateRecord(session.Domain, node.IP, proxied)
-				if dnsErr != nil {
-					log.Printf("[Cloudflare] DNS resolution failed for %s -> %s: %v", session.Domain, node.IP, dnsErr)
-					b.editMessageDirect(session.ChatID, session.MessageID, fmt.Sprintf("⚠️ **DNS 自动绑定失败**\n项目部署成功，但 Cloudflare 解析失败：%v", dnsErr))
-					time.Sleep(3 * time.Second)
-				} else {
-					log.Printf("[Cloudflare] DNS resolution success for %s -> %s", session.Domain, node.IP)
+		ownerUser, errUser := b.dbManager.GetUser(session.OwnerUID)
+		if errUser != nil || ownerUser == nil || ownerUser.AssignedCF == "" {
+			b.editMessageDirect(session.ChatID, session.MessageID, "⚠️ **DNS 自动绑定未执行**\n未找到该用户分配的 Cloudflare 配置，请联系管理员分配。")
+			time.Sleep(3 * time.Second)
+		} else {
+			cfConfig, err := b.dbManager.GetCFConfig(ownerUser.AssignedCF)
+			if err == nil && cfConfig != nil && cfConfig.APIToken != "" && cfConfig.ZoneID != "" {
+				node, nodeErr := b.dbManager.GetNode(session.NodeAlias)
+				if nodeErr == nil && node.IP != "" {
+					proxied := (session.CFDNSType == "proxy")
+					dnsClient := cloudflare.NewDNSClient(cfConfig.APIToken, cfConfig.ZoneID)
+					dnsErr := dnsClient.CreateOrUpdateRecord(session.Domain, node.IP, proxied)
+					if dnsErr != nil {
+						log.Printf("[Cloudflare] DNS resolution failed for %s -> %s: %v", session.Domain, node.IP, dnsErr)
+						b.editMessageDirect(session.ChatID, session.MessageID, fmt.Sprintf("⚠️ **DNS 自动绑定失败**\n项目部署成功，但 Cloudflare 解析失败：%v", dnsErr))
+						time.Sleep(3 * time.Second)
+					} else {
+						log.Printf("[Cloudflare] DNS resolution success for %s -> %s using config %s", session.Domain, node.IP, cfConfig.Name)
+					}
 				}
+			} else {
+				b.editMessageDirect(session.ChatID, session.MessageID, "⚠️ **DNS 自动绑定失败**\nCloudflare 配置无效或读取失败。")
+				time.Sleep(3 * time.Second)
 			}
 		}
 	}

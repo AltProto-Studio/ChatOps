@@ -306,33 +306,64 @@ func (m *Manager) ListTokens() ([]*types.Token, error) {
 	return tokens, nil
 }
 
-// SetCFConfig saves the Cloudflare API Token and Zone ID in the config bucket
-func (m *Manager) SetCFConfig(apiToken, zoneID string) error {
+// SaveCFConfig saves or updates a CFConfig in the cf_configs bucket
+func (m *Manager) SaveCFConfig(config *types.CFConfig) error {
+	if config == nil {
+		return errors.New("cf config cannot be nil")
+	}
 	return m.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(BucketConfig)
-		if err := b.Put([]byte("cf_api_token"), []byte(apiToken)); err != nil {
-			return err
+		b := tx.Bucket(BucketCFConfigs)
+		data, err := json.Marshal(config)
+		if err != nil {
+			return fmt.Errorf("failed to marshal cf config: %w", err)
 		}
-		return b.Put([]byte("cf_zone_id"), []byte(zoneID))
+		return b.Put([]byte(config.ID), data)
 	})
 }
 
-// GetCFConfig retrieves the Cloudflare API Token and Zone ID from the config bucket
-func (m *Manager) GetCFConfig() (string, string, error) {
-	var token, zone string
+// GetCFConfig retrieves a CFConfig by its ID.
+func (m *Manager) GetCFConfig(id string) (*types.CFConfig, error) {
+	var config types.CFConfig
 	err := m.db.View(func(tx *bolt.Tx) error {
-		b := tx.Bucket(BucketConfig)
-		tokVal := b.Get([]byte("cf_api_token"))
-		zoneVal := b.Get([]byte("cf_zone_id"))
-		if tokVal != nil {
-			token = string(tokVal)
+		b := tx.Bucket(BucketCFConfigs)
+		val := b.Get([]byte(id))
+		if val == nil {
+			return ErrNotFound
 		}
-		if zoneVal != nil {
-			zone = string(zoneVal)
-		}
-		return nil
+		return json.Unmarshal(val, &config)
 	})
-	return token, zone, err
+	if err != nil {
+		return nil, err
+	}
+	return &config, nil
+}
+
+// ListCFConfigs retrieves all registered CFConfigs
+func (m *Manager) ListCFConfigs() ([]*types.CFConfig, error) {
+	var configs []*types.CFConfig
+	err := m.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(BucketCFConfigs)
+		return b.ForEach(func(k, v []byte) error {
+			var c types.CFConfig
+			if err := json.Unmarshal(v, &c); err != nil {
+				return err
+			}
+			configs = append(configs, &c)
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return configs, nil
+}
+
+// DeleteCFConfig removes a CFConfig by its ID
+func (m *Manager) DeleteCFConfig(id string) error {
+	return m.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(BucketCFConfigs)
+		return b.Delete([]byte(id))
+	})
 }
 
 // MarkNodesOffline updates the connected status to false for a list of node aliases in a single transaction
