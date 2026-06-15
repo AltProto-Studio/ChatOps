@@ -1079,15 +1079,15 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 	case text == "⚙️ 更多功能":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" {
-			b.reply(chatID, "❌ 权限不足。仅最高管理员可访问配置板块。")
+		if user.Role != "master" && user.Role != "admin" {
+			b.reply(chatID, "❌ 权限不足。仅管理员可访问配置板块。")
 			return
 		}
 		b.showMoreFunctionsMenu(chatID, user)
 
 	case text == "☁️ 配置 Cloudflare":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" {
+		if user.Role != "master" && user.Role != "admin" {
 			b.reply(chatID, "❌ 权限不足。")
 			return
 		}
@@ -1103,7 +1103,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 	case text == "📜 查看 Master 日志":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" {
+		if user.Role != "master" && user.Role != "admin" {
 			b.reply(chatID, "❌ 权限不足。")
 			return
 		}
@@ -1128,7 +1128,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 	case text == "🔍 检查更新":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" {
+		if user.Role != "master" && user.Role != "admin" {
 			b.reply(chatID, "❌ 权限不足。")
 			return
 		}
@@ -1264,8 +1264,9 @@ func (b *Bot) getMainMenuMarkup(user *types.User) tgbotapi.ReplyKeyboardMarkup {
 		replyButtons = append(replyButtons, row1, row2, row3)
 	} else if user != nil && user.Role == "admin" {
 		row1 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🚀 部署应用"), tgbotapi.NewKeyboardButton("🔑 生成邀请码")}
-		row2 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🖥️ 节点状态"), tgbotapi.NewKeyboardButton("❌ 取消操作")}
-		replyButtons = append(replyButtons, row1, row2)
+		row2 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🖥️ 节点状态"), tgbotapi.NewKeyboardButton("⚙️ 更多功能")}
+		row3 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("❌ 取消操作")}
+		replyButtons = append(replyButtons, row1, row2, row3)
 	} else {
 		row1 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🚀 部署应用"), tgbotapi.NewKeyboardButton("🖥️ 节点状态")}
 		row2 := []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("❌ 取消操作")}
