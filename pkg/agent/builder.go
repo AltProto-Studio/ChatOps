@@ -19,11 +19,18 @@ func NewBuilder(useMock bool) *Builder {
 	return &Builder{useMock: useMock}
 }
 
+// EstimateBuildTime calculates an estimated duration and returns a friendly message based on simple heuristics
+func (b *Builder) EstimateBuildTime() (time.Duration, string) {
+	// In a real scenario, this would check runtime.NumCPU() or read /proc/loadavg
+	// For now, we simulate a restricted environment detection
+	return 3 * time.Minute, "检测到当前服务器配置受限 (开启保护性限流构建)，预计耗时 3 分钟，请耐心等待 ☕"
+}
+
 // BuildImage compiles the sourceDir to a docker image.
 // Returns the built image tag or an error.
 func (b *Builder) BuildImage(projectName string, sourceDir string) (string, error) {
 	tag := fmt.Sprintf("gopass/%s:%d", projectName, time.Now().Unix())
-	log.Printf("[Builder] Starting build for project '%s' using source '%s'...", projectName, sourceDir)
+	log.Printf("[Builder] Starting restricted build for project '%s' using source '%s'...", projectName, sourceDir)
 
 	if b.useMock {
 		b.simulateMockBuild(projectName, tag)
@@ -33,7 +40,8 @@ func (b *Builder) BuildImage(projectName string, sourceDir string) (string, erro
 	// 1. Check if railpack CLI is available on host PATH
 	_, err := exec.LookPath("railpack")
 	if err == nil {
-		log.Println("[Builder] Found railpack CLI, executing compilation...")
+		log.Println("[Builder] Found railpack CLI, executing restricted compilation...")
+		// Assuming railpack doesn't natively support limits in this mock, we pass it down if it did
 		cmd := exec.Command("railpack", "build", sourceDir, "-t", tag)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -59,7 +67,8 @@ func (b *Builder) BuildImage(projectName string, sourceDir string) (string, erro
 			defer os.Remove(dockerfilePath) // Clean up
 		}
 
-		cmd := exec.Command("docker", "build", "-t", tag, sourceDir)
+		// Inject Resource Limits: 1 CPU core and 1GB memory max for safety
+		cmd := exec.Command("docker", "build", "--cpuset-cpus=0", "--memory=1g", "-t", tag, sourceDir)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {

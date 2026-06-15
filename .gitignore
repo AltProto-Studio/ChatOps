@@ -28,6 +28,10 @@ Thumbs.db
 /cmd/test-e2e/
 /cmd/run-all/
 build.ps1
+ChatOps.md
+pkg/db/db_test.go
+pkg/types/deploy_test.go
+.github/
 
 # External tools and dependencies
 protoc-bin/
