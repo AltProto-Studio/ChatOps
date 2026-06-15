@@ -99,8 +99,12 @@ func (c *Client) connectAndRun() error {
 	// Set up gRPC dial options
 	var opts []grpc.DialOption
 	if !c.tlsEnabled {
+		log.Printf("[SECURITY WARNING] TLS is disabled. Agent gRPC connection to Master is unencrypted and susceptible to MITM.")
 		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	} else {
+		if c.tlsSkipVerify {
+			log.Printf("[SECURITY WARNING] TLS InsecureSkipVerify is TRUE. Agent gRPC connection is susceptible to MITM.")
+		}
 		tlsConfig := &tls.Config{
 			InsecureSkipVerify: c.tlsSkipVerify,
 		}
@@ -298,8 +302,12 @@ func (c *Client) handleDeployTask(task *pb.DeployTask) {
 	c.sendProgress(task.TaskId, "CLONING", "✅ deploy.json validated successfully.")
 
 	// Step 2: Build Image using Railpack/Fallback
-	c.sendProgress(task.TaskId, "BUILDING", "🛠️ Compiling and building Docker image...")
 	builder := NewBuilder(false) // Will auto-detect or mock
+	
+	// Estimate build time and notify master of restricted mode
+	estimatedTime, reason := builder.EstimateBuildTime()
+	c.sendProgress(task.TaskId, "BUILDING", fmt.Sprintf("🛠️ 准备编译... (预估用时: %s)\n%s", estimatedTime, reason))
+	
 	imageTag, err := builder.BuildImage(cfg.ProjectName, tempSourceDir)
 	if err != nil {
 		c.sendProgress(task.TaskId, "FAILED", "❌ Image compilation failed: "+err.Error())

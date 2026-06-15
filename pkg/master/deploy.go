@@ -57,6 +57,10 @@ func DeployAgentToRemote(ip string, port int, username string, password string, 
 		return fmt.Errorf("neither password nor private key provided")
 	}
 
+	addr := fmt.Sprintf("%s:%d", ip, port)
+	// SECURITY WARNING: InsecureIgnoreHostKey makes the connection susceptible to MITM attacks.
+	// It is kept for UX convenience of "one-click deploy" to new nodes.
+	log.Printf("[SECURITY WARNING] SSH HostKey verification is disabled. Connection to %s is susceptible to MITM.", addr)
 	config := &ssh.ClientConfig{
 		User:            username,
 		Auth:            auth,
@@ -64,7 +68,6 @@ func DeployAgentToRemote(ip string, port int, username string, password string, 
 		Timeout:         15 * time.Second,
 	}
 
-	addr := fmt.Sprintf("%s:%d", ip, port)
 	log.Printf("[Deploy] Connecting to remote host %s via SSH...", addr)
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
