@@ -279,7 +279,7 @@ func (c *Client) handleDeployTask(task *pb.DeployTask) {
 
 	cmd := exec.Command("git", "clone", "--depth=1", task.GitUrl, tempSourceDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		c.sendProgress(task.TaskId, "FAILED", "❌ Git clone failed: "+string(out))
+		c.sendProgress(task.TaskId, "FAILED", fmt.Sprintf("❌ Git clone failed: %v. Output: %s", err, string(out)))
 		return
 	}
 
