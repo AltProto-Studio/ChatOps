@@ -113,13 +113,6 @@ func main() {
 		log.Printf("Loaded existing administrator UID: %d", adminUID)
 	}
 
-	// 3.5 Start Webhook Server (for external CI integrations)
-	go func() {
-		if err := master.StartWebhookServer(cfg.WebhookPort, mgr); err != nil {
-			log.Printf("[ERROR] Webhook server failed: %v", err)
-		}
-	}()
-
 	// 4. Start gRPC Server
 	server, err := master.NewServer(mgr, cfg.GrpcAddr, cfg.TLSEnabled, cfg.TLSCertPath, cfg.TLSKeyPath)
 	if err != nil {

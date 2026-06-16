@@ -12,7 +12,6 @@ import (
 type MasterConfig struct {
 	DbPath        string `yaml:"db_path"`
 	GrpcAddr      string `yaml:"grpc_addr"`
-	WebhookPort   string `yaml:"webhook_port"`
 	TelegramToken string `yaml:"telegram_token"`
 	TLSEnabled    bool   `yaml:"tls_enabled"`
 	TLSCertPath   string `yaml:"tls_cert_path"`
@@ -35,7 +34,6 @@ func DefaultMasterConfig() *MasterConfig {
 	return &MasterConfig{
 		DbPath:        "gopass-master.db",
 		GrpcAddr:      "127.0.0.1:50051",
-		WebhookPort:   ":8080",
 		TelegramToken: "YOUR_TELEGRAM_BOT_TOKEN_HERE",
 		TLSEnabled:    false,
 		TLSCertPath:   "",
@@ -93,9 +91,6 @@ func LoadMasterConfig(path string) (*MasterConfig, error) {
 	}
 	if envAddr := os.Getenv("GOPASS_GRPC_ADDR"); envAddr != "" {
 		cfg.GrpcAddr = envAddr
-	}
-	if envWebhook := os.Getenv("GOPASS_WEBHOOK_PORT"); envWebhook != "" {
-		cfg.WebhookPort = envWebhook
 	}
 	if envDb := os.Getenv("GOPASS_DB_PATH"); envDb != "" {
 		cfg.DbPath = envDb

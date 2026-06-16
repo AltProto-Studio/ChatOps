@@ -27,14 +27,21 @@ func (b *Builder) EstimateBuildTime() (time.Duration, string) {
 }
 
 // BuildImage compiles the sourceDir to a docker image.
-// Returns the built image tag or an error.
-func (b *Builder) BuildImage(projectName string, sourceDir string) (string, error) {
-	tag := fmt.Sprintf("gopass/%s:%d", projectName, time.Now().Unix())
+// Returns the built image tag, a boolean indicating if it already existed, or an error.
+func (b *Builder) BuildImage(projectName string, sourceDir string, commitHash string) (string, bool, error) {
+	tag := fmt.Sprintf("gopass/%s:%s", projectName, commitHash)
 	log.Printf("[Builder] Starting restricted build for project '%s' using source '%s'...", projectName, sourceDir)
 
 	if b.useMock {
 		b.simulateMockBuild(projectName, tag)
-		return tag, nil
+		return tag, false, nil
+	}
+
+	// Check if image exists
+	checkCmd := exec.Command("docker", "image", "inspect", tag)
+	if err := checkCmd.Run(); err == nil {
+		log.Printf("[Builder] Image %s already exists, skipping build.", tag)
+		return tag, true, nil
 	}
 
 	// 1. Check if railpack CLI is available on host PATH
@@ -46,9 +53,9 @@ func (b *Builder) BuildImage(projectName string, sourceDir string) (string, erro
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("railpack build failed: %w", err)
+			return "", false, fmt.Errorf("railpack build failed: %w", err)
 		}
-		return tag, nil
+		return tag, false, nil
 	}
 
 	log.Println("[Builder] railpack CLI not found. Checking for standard Docker CLI...")
@@ -62,7 +69,7 @@ func (b *Builder) BuildImage(projectName string, sourceDir string) (string, erro
 			log.Println("[Builder] Dockerfile not found, generating minimal fallback Dockerfile...")
 			fallbackContent := []byte("FROM alpine\nRUN apk add --no-cache curl\nCMD echo \"Mock App Running\" && nc -lk -p 8080 -e echo -e \"HTTP/1.1 200 OK\\r\\n\\r\\nHello from fallback\"\n")
 			if err := os.WriteFile(dockerfilePath, fallbackContent, 0644); err != nil {
-				return "", fmt.Errorf("failed to write fallback Dockerfile: %w", err)
+				return "", false, fmt.Errorf("failed to write fallback Dockerfile: %w", err)
 			}
 			defer os.Remove(dockerfilePath) // Clean up
 		}
@@ -74,15 +81,15 @@ func (b *Builder) BuildImage(projectName string, sourceDir string) (string, erro
 		if err := cmd.Run(); err != nil {
 			log.Println("[Builder] Docker build failed (Docker daemon probably not running). Falling back to Mock build...")
 			b.simulateMockBuild(projectName, tag)
-			return tag, nil
+			return tag, false, nil
 		}
-		return tag, nil
+		return tag, false, nil
 	}
 
 	// 3. Fallback to Mock Build if no builders found
 	log.Println("[Builder] No builder toolchains found. Using Mock Build Engine...")
 	b.simulateMockBuild(projectName, tag)
-	return tag, nil
+	return tag, false, nil
 }
 
 func (b *Builder) simulateMockBuild(project, tag string) {

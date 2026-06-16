@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -49,8 +50,24 @@ func NewDNSClient(apiToken, zoneID string) *DNSClient {
 
 // CreateOrUpdateRecord checks for an existing record with the name, then updates or creates it
 func (c *DNSClient) CreateOrUpdateRecord(name, content string, proxied bool) error {
-	if c.APIToken == "" || c.ZoneID == "" {
-		return fmt.Errorf("cloudflare API Token or Zone ID is not configured")
+	if c.APIToken == "" {
+		return fmt.Errorf("cloudflare API Token is not configured")
+	}
+
+	if c.ZoneID == "" {
+		zones, err := ListZones(c.APIToken)
+		if err != nil {
+			return fmt.Errorf("failed to list zones for auto-discovery: %w", err)
+		}
+		for _, z := range zones {
+			if strings.HasSuffix(name, z.Name) {
+				c.ZoneID = z.ID
+				break
+			}
+		}
+		if c.ZoneID == "" {
+			return fmt.Errorf("could not find matching zone ID for domain %s", name)
+		}
 	}
 
 	// 1. Determine record type (A vs CNAME)
@@ -140,4 +157,56 @@ func (c *DNSClient) CreateOrUpdateRecord(name, content string, proxied bool) err
 	}
 
 	return nil
+}
+
+// CFZone represents a Cloudflare Zone
+type CFZone struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// CFZonesResponse represents the response for listing zones
+type CFZonesResponse struct {
+	Result  []CFZone `json:"result"`
+	Success bool     `json:"success"`
+	Errors  []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+// ListZones fetches all zones available for the token
+func ListZones(apiToken string) ([]CFZone, error) {
+	req, err := http.NewRequest("GET", "https://api.cloudflare.com/client/v4/zones?status=active", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+apiToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list zones failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var zonesResp CFZonesResponse
+	if err := json.Unmarshal(bodyBytes, &zonesResp); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	if !zonesResp.Success {
+		return nil, fmt.Errorf("API reported failure: %v", zonesResp.Errors)
+	}
+
+	return zonesResp.Result, nil
 }

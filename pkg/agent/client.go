@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -266,9 +267,8 @@ func (c *Client) sendProgress(taskID, state, logLine string) {
 func (c *Client) handleDeployTask(task *pb.DeployTask) {
 	log.Printf("[Agent] Starting deployment task: %s (Project: %s)", task.TaskId, task.ProjectName)
 
-	// Step 1: Git Clone Simulation & Config Generation
-	c.sendProgress(task.TaskId, "CLONING", "📥 Simulating git clone: "+task.GitUrl)
-	time.Sleep(1 * time.Second)
+	// Step 1: Real Git Clone
+	c.sendProgress(task.TaskId, "CLONING", "📥 Cloning git repository: "+task.GitUrl)
 
 	tempSourceDir, err := os.MkdirTemp("", "gopass_src_"+task.ProjectName+"_*")
 	if err != nil {
@@ -276,6 +276,29 @@ func (c *Client) handleDeployTask(task *pb.DeployTask) {
 		return
 	}
 	defer os.RemoveAll(tempSourceDir)
+
+	cmd := exec.Command("git", "clone", "--depth=1", task.GitUrl, tempSourceDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		c.sendProgress(task.TaskId, "FAILED", "❌ Git clone failed: "+string(out))
+		return
+	}
+
+	commitCmd := exec.Command("git", "rev-parse", "HEAD")
+	commitCmd.Dir = tempSourceDir
+	commitHashBytes, err := commitCmd.Output()
+	var commitHash string
+	if err == nil {
+		commitHash = strings.TrimSpace(string(commitHashBytes))
+		c.sendProgress(task.TaskId, "CLONING", "✅ Git clone successful. Commit: "+commitHash)
+	} else {
+		commitHash = fmt.Sprintf("%d", time.Now().Unix())
+	}
+
+	// We pass the commitHash via environment so the builder can use it as a tag
+	if task.Env == nil {
+		task.Env = make(map[string]string)
+	}
+	task.Env["GOPASS_COMMIT_HASH"] = commitHash
 
 	envJSON, _ := json.Marshal(task.Env)
 	deployJSONContent := fmt.Sprintf(`{
@@ -308,33 +331,53 @@ func (c *Client) handleDeployTask(task *pb.DeployTask) {
 	estimatedTime, reason := builder.EstimateBuildTime()
 	c.sendProgress(task.TaskId, "BUILDING", fmt.Sprintf("🛠️ 准备编译... (预估用时: %s)\n%s", estimatedTime, reason))
 	
-	imageTag, err := builder.BuildImage(cfg.ProjectName, tempSourceDir)
+	imageTag, existed, err := builder.BuildImage(cfg.ProjectName, tempSourceDir, commitHash)
 	if err != nil {
 		c.sendProgress(task.TaskId, "FAILED", "❌ Image compilation failed: "+err.Error())
 		return
 	}
-	c.sendProgress(task.TaskId, "BUILDING", "✅ Docker image built: "+imageTag)
+	if existed {
+		c.sendProgress(task.TaskId, "BUILDING", "✅ Docker image already exists (cached): "+imageTag)
+	} else {
+		c.sendProgress(task.TaskId, "BUILDING", "✅ Docker image built: "+imageTag)
+	}
 
 	// Step 3: Deploy Container using Docker SDK
 	c.sendProgress(task.TaskId, "ROUTING", "🐳 Spawning container via Docker Manager...")
 	dm := GetContainerManager()
 	
-	// Default owner uid set to 88888888 for testing
 	hostPort, containerID, err := dm.DeployContainer(cfg.ProjectName, imageTag, cfg.Routing.ContainerPort, cfg.Env, 88888888, cfg.Routing.Domain)
 	if err != nil {
-		c.sendProgress(task.TaskId, "FAILED", "❌ Failed to deploy Docker container: "+err.Error())
+		c.sendProgress(task.TaskId, "FAILED", "❌ Container deployment failed: "+err.Error())
 		return
 	}
-	c.sendProgress(task.TaskId, "ROUTING", fmt.Sprintf("✅ Container spawned (Port: %d, ID: %s)", hostPort, containerID[:12]))
 
-	// Step 4: Refresh Caddy Route
-	c.sendProgress(task.TaskId, "ROUTING", "🌐 Updating reverse proxy routing in Caddy...")
-	cm := NewCaddyManager()
-	if err := cm.UpdateRoute(cfg.Routing.Domain, hostPort, task.UseSsl); err != nil {
-		c.sendProgress(task.TaskId, "FAILED", "❌ Failed to update Caddy routing: "+err.Error())
-		return
+	c.sendProgress(task.TaskId, "ROUTING", fmt.Sprintf("✅ Container deployed successfully. Bound to host port %d", hostPort))
+
+	caddy := NewCaddyManager()
+	if cfg.Routing.Domain != "" {
+		c.sendProgress(task.TaskId, "ROUTING", "🌐 Configuring Caddy reverse proxy for domain: "+cfg.Routing.Domain)
+		if err := caddy.UpdateRoute(cfg.Routing.Domain, hostPort, task.UseSsl); err != nil {
+			c.sendProgress(task.TaskId, "WARNING", "⚠️ Caddy routing configuration failed: "+err.Error())
+		} else {
+			c.sendProgress(task.TaskId, "ROUTING", "✅ Caddy routing configured successfully.")
+		}
+	} else {
+		c.sendProgress(task.TaskId, "ROUTING", "🌐 No custom domain specified. Direct IP access only.")
 	}
-	c.sendProgress(task.TaskId, "ROUTING", "✅ Caddy routing configuration updated.")
+
+	// Send final JSON state back for DB tracking
+	finalState := struct {
+		Domain string `json:"domain"`
+		Port   int    `json:"port"`
+	}{
+		Domain: cfg.Routing.Domain,
+		Port:   hostPort,
+	}
+	finalData, _ := json.Marshal(finalState)
+	c.sendProgress(task.TaskId, "DEPLOY_SUCCESS", string(finalData))
+
+	c.sendProgress(task.TaskId, "COMPLETED", "🎉 Application deployed and is now LIVE!")
 
 	// Step 5: Smooth Transition & Clean Old Containers
 	c.sendProgress(task.TaskId, "ROUTING", "🧹 Disposing of previous project containers...")

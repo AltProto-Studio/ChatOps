@@ -58,3 +58,15 @@ type HardwareInfo struct {
 	MemoryUsage float64 `json:"memory_usage"` // Memory usage percentage
 	DiskUsage   float64 `json:"disk_usage"`   // Disk usage percentage
 }
+
+// Deployment represents an active app deployment on a node
+type Deployment struct {
+	ID          string    `json:"id"`
+	TaskID      string    `json:"task_id"`
+	NodeAlias   string    `json:"node_alias"`
+	ProjectName string    `json:"project_name"`
+	Domain      string    `json:"domain"`
+	Port        int       `json:"port"`
+	Status      string    `json:"status"` // e.g. "RUNNING", "STOPPED", "FAILED"
+	CreatedAt   time.Time `json:"created_at"`
+}

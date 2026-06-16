@@ -425,4 +425,46 @@ func (m *Manager) MarkNodesOffline(aliases []string) error {
 	})
 }
 
+// --- Deployment DAO Methods ---
+
+// SaveDeployment saves or updates a Deployment
+func (m *Manager) SaveDeployment(dep *types.Deployment) error {
+	if dep == nil {
+		return errors.New("deployment cannot be nil")
+	}
+	return m.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(BucketDeployments)
+		data, err := json.Marshal(dep)
+		if err != nil {
+			return fmt.Errorf("failed to marshal deployment: %w", err)
+		}
+		return b.Put([]byte(dep.ID), data)
+	})
+}
+
+// ListDeploymentsByNode lists all deployments for a specific node
+func (m *Manager) ListDeploymentsByNode(nodeAlias string) ([]*types.Deployment, error) {
+	var deps []*types.Deployment
+	err := m.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(BucketDeployments)
+		return b.ForEach(func(k, v []byte) error {
+			var dep types.Deployment
+			if err := json.Unmarshal(v, &dep); err == nil {
+				if dep.NodeAlias == nodeAlias {
+					deps = append(deps, &dep)
+				}
+			}
+			return nil
+		})
+	})
+	return deps, err
+}
+
+// DeleteDeployment removes a deployment
+func (m *Manager) DeleteDeployment(id string) error {
+	return m.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(BucketDeployments)
+		return b.Delete([]byte(id))
+	})
+}
 

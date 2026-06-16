@@ -2,6 +2,7 @@ package master
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ type UserConversationState struct {
 	// Temporary deploy wizard configuration properties
 	DeployGitURL    string
 	DeployDomain    string
+	BaseDomain      string
 	DeployCFDNSType string // "proxy", "dns", "none"
 	DeployUseSSL    bool
 
@@ -367,19 +369,54 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 		if state.Step == "WAITING_FOR_DOMAIN_TYPE" {
 			b.deleteMessage(chatID, msgID)
 
-			if text == "🌐 默认子域名" {
+			if text == "🌐 直接使用节点公网 IP" {
 				b.userStatesMu.Lock()
-				state.DeployDomain = "" // 使用默认子域名
+				state.DeployDomain = "" // 使用默认IP
+				state.DeployCFDNSType = "none"
+				state.DeployUseSSL = false
+				state.Step = "WAITING_FOR_GIT_URL"
 				state.UpdatedAt = time.Now()
 				b.userStatesMu.Unlock()
 
-				// 下一步：Cloudflare 解析配置
-				b.showCFDNSTypeMenu(chatID, fromUID)
-			} else if text == "✏️ 自定义独立域名" {
-				b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CUSTOM_DOMAIN", "✏️ 请输入自定义域名:", b.getCancelKeyboard())
+				b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_GIT_URL", "🚀 请发送 Git 仓库地址:", b.getCancelKeyboard())
+			} else if text == "☁️ 绑定 Cloudflare 域名 (推荐)" || text == "✏️ 自定义独立域名" {
+				go b.handleFetchCFZones(chatID, fromUID, user)
 			} else {
 				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 输入无效，请重新选择:")
 			}
+			return
+		}
+
+		if state.Step == "WAITING_FOR_CF_ZONE_SELECTION" {
+			b.deleteMessage(chatID, msgID)
+			
+			baseDomain := strings.TrimSpace(strings.TrimPrefix(text, "🌐 "))
+			b.userStatesMu.Lock()
+			state.Step = "WAITING_FOR_SUBDOMAIN"
+			state.BaseDomain = baseDomain
+			state.UpdatedAt = time.Now()
+			b.userStatesMu.Unlock()
+
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_SUBDOMAIN", fmt.Sprintf("✏️ 请输入三级域名前缀 (例如输入 `api` 将绑定至 `api.%s`):", baseDomain), b.getCancelKeyboard())
+			return
+		}
+
+		if state.Step == "WAITING_FOR_SUBDOMAIN" {
+			b.deleteMessage(chatID, msgID)
+
+			subPrefix := strings.TrimSpace(text)
+			if subPrefix == "" || strings.Contains(subPrefix, " ") {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ 前缀格式错误，请重新输入:")
+				return
+			}
+
+			b.userStatesMu.Lock()
+			state.DeployDomain = fmt.Sprintf("%s.%s", subPrefix, state.BaseDomain)
+			state.Step = "WAITING_FOR_CF_DNS_TYPE"
+			state.UpdatedAt = time.Now()
+			b.userStatesMu.Unlock()
+
+			b.showCFDNSTypeMenu(chatID, fromUID)
 			return
 		}
 
@@ -830,8 +867,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			b.userStatesMu.Lock()
 			state.CFToken = token
 			b.userStatesMu.Unlock()
-
-			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CF_ZONE", "☁️ 请输入 Cloudflare Zone ID:", b.getCancelKeyboard())
+			b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CF_ZONE", "☁️ 请输入 Cloudflare Zone ID (或输入 no 跳过):", b.getCancelKeyboard())
 			return
 		}
 
@@ -841,8 +877,10 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			b.userStatesMu.Unlock()
 
 			zone := strings.TrimSpace(text)
-			if zone == "" || strings.Contains(zone, " ") {
-				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ Zone ID 格式错误，请重新输入:")
+			if strings.ToLower(zone) == "no" {
+				zone = ""
+			} else if zone == "" || strings.Contains(zone, " ") {
+				b.sendErrorReplyWithCancel(chatID, fromUID, "❌ Zone ID 格式错误，请重新输入或输入 'no' 跳过:")
 				return
 			}
 
@@ -1259,6 +1297,17 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 				if n.IP != "" {
 					sb.WriteString(fmt.Sprintf("   - 节点 IP: `%s`\n", n.IP))
 				}
+
+				// List Deployments
+				deps, _ := b.dbManager.ListDeploymentsByNode(n.Alias)
+				if len(deps) > 0 {
+					sb.WriteString("   - 📦 部署的项目:\n")
+					for _, d := range deps {
+						sb.WriteString(fmt.Sprintf("       • `%s` (域名: %s:%d, 状态: %s)\n", d.ProjectName, d.Domain, d.Port, d.Status))
+					}
+				} else {
+					sb.WriteString("   - 📦 部署的项目: 无\n")
+				}
 			}
 			sb.WriteString("\n")
 		}
@@ -1655,8 +1704,8 @@ func (b *Bot) showNodeSelectionMenu(chatID int64, fromUID int64) {
 func (b *Bot) showDomainTypeMenu(chatID int64, fromUID int64) {
 	var replyButtons [][]tgbotapi.KeyboardButton
 	row1 := []tgbotapi.KeyboardButton{
-		tgbotapi.NewKeyboardButton("🌐 默认子域名"),
-		tgbotapi.NewKeyboardButton("✏️ 自定义独立域名"),
+		tgbotapi.NewKeyboardButton("🌐 直接使用节点公网 IP"),
+		tgbotapi.NewKeyboardButton("☁️ 绑定 Cloudflare 域名 (推荐)"),
 	}
 	row2 := []tgbotapi.KeyboardButton{
 		tgbotapi.NewKeyboardButton("❌ 取消操作"),
@@ -1666,7 +1715,7 @@ func (b *Bot) showDomainTypeMenu(chatID int64, fromUID int64) {
 	replyMarkup := tgbotapi.NewReplyKeyboard(replyButtons...)
 	replyMarkup.ResizeKeyboard = true
 
-	text := "🌐 请选择域名解析方式:"
+	text := "🌐 请选择部署访问方式:"
 	b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_DOMAIN_TYPE", text, replyMarkup)
 }
 
@@ -2162,6 +2211,25 @@ func (b *Bot) onTaskProgress(p *pb.TaskProgress) {
 		text = "🛠️ **正在构建容器镜像 (Railpack)...**\n" + p.LogLine
 	case "ROUTING":
 		text = "🌐 **正在配置反向代理与端口调度...**\n" + p.LogLine
+	case "DEPLOY_SUCCESS":
+		var finalState struct {
+			Domain string `json:"domain"`
+			Port   int    `json:"port"`
+		}
+		if err := json.Unmarshal([]byte(p.LogLine), &finalState); err == nil {
+			dep := &types.Deployment{
+				ID:          p.TaskId,
+				TaskID:      p.TaskId,
+				NodeAlias:   session.NodeAlias,
+				ProjectName: session.ProjectName,
+				Domain:      finalState.Domain,
+				Port:        finalState.Port,
+				Status:      "RUNNING",
+				CreatedAt:   time.Now(),
+			}
+			b.dbManager.SaveDeployment(dep)
+		}
+		return
 	case "SUCCESS":
 		text = "🎉 **部署任务成功！**\n" + p.LogLine
 		go b.handleDeploySuccess(p.TaskId, session)
@@ -2592,3 +2660,40 @@ func detectMasterIP() string {
 	return "YOUR_MASTER_PUBLIC_IP"
 }
 
+func (b *Bot) handleFetchCFZones(chatID int64, fromUID int64, user *types.User) {
+	if user.AssignedCF == "" {
+		b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CUSTOM_DOMAIN", "✏️ 您未绑定 Cloudflare 配置，请输入完整自定义独立域名 (例如 app.example.com):", b.getCancelKeyboard())
+		return
+	}
+
+	cfConfig, err := b.dbManager.GetCFConfig(user.AssignedCF)
+	if err != nil || cfConfig == nil {
+		b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CUSTOM_DOMAIN", "✏️ 读取 Cloudflare 配置失败，请输入完整自定义独立域名:", b.getCancelKeyboard())
+		return
+	}
+
+	b.editMessageDirect(chatID, -1, "☁️ 正在抓取 Cloudflare 域名列表，请稍候...")
+	zones, err := cloudflare.ListZones(cfConfig.APIToken)
+	if err != nil || len(zones) == 0 {
+		b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CUSTOM_DOMAIN", "✏️ 抓取域名失败或无可用域名，请输入完整自定义独立域名:", b.getCancelKeyboard())
+		return
+	}
+
+	var replyButtons [][]tgbotapi.KeyboardButton
+	for _, z := range zones {
+		replyButtons = append(replyButtons, []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("🌐 " + z.Name)})
+	}
+	replyButtons = append(replyButtons, []tgbotapi.KeyboardButton{tgbotapi.NewKeyboardButton("❌ 取消操作")})
+
+	replyMarkup := tgbotapi.NewReplyKeyboard(replyButtons...)
+	replyMarkup.ResizeKeyboard = true
+
+	b.userStatesMu.Lock()
+	state, exists := b.userStates[fromUID]
+	if exists {
+		state.Step = "WAITING_FOR_CF_ZONE_SELECTION"
+	}
+	b.userStatesMu.Unlock()
+
+	b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CF_ZONE_SELECTION", "☁️ 请选择要绑定的主域名:", replyMarkup)
+}

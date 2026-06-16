@@ -10,9 +10,10 @@ import (
 var (
 	BucketUsers     = []byte("users")
 	BucketTokens    = []byte("tokens")
-	BucketNodes     = []byte("nodes")
-	BucketConfig    = []byte("config")
-	BucketCFConfigs = []byte("cf_configs")
+	BucketNodes       = []byte("nodes")
+	BucketConfig      = []byte("config")
+	BucketCFConfigs   = []byte("cf_configs")
+	BucketDeployments = []byte("deployments")
 )
 
 // Manager wraps the bbolt database and provides helper methods
@@ -28,7 +29,7 @@ func NewManager(dbPath string) (*Manager, error) {
 	}
 
 	err = db.Update(func(tx *bolt.Tx) error {
-		buckets := [][]byte{BucketUsers, BucketTokens, BucketNodes, BucketConfig, BucketCFConfigs}
+		buckets := [][]byte{BucketUsers, BucketTokens, BucketNodes, BucketConfig, BucketCFConfigs, BucketDeployments}
 		for _, b := range buckets {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return fmt.Errorf("failed to create bucket %s: %w", b, err)
