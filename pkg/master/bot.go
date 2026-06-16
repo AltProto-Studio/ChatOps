@@ -890,7 +890,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			b.clearConversationHistory(chatID, state)
 
 			if err != nil {
-				b.reply(chatID, "❌ Cloudflare 配置保存失败: "+err.Error())
+				b.replyWithMarkup(chatID, "❌ Cloudflare 配置保存失败: "+err.Error(), b.getMainMenuMarkup(user))
 			} else {
 				if b.useMock {
 					log.Printf("[Bot Mock] REPLY: Cloudflare 配置保存成功！")
@@ -930,7 +930,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 				delete(b.userStates, fromUID)
 				b.userStatesMu.Unlock()
 				b.clearConversationHistory(chatID, state)
-				b.reply(chatID, "⚠️ 系统中当前没有任何 Cloudflare 配置，请先添加配置。")
+				b.replyWithMarkup(chatID, "⚠️ 系统中当前没有任何 Cloudflare 配置，请先添加配置。", b.getMainMenuMarkup(user))
 				return
 			}
 
@@ -982,7 +982,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			b.clearConversationHistory(chatID, state)
 
 			if err != nil {
-				b.reply(chatID, "❌ 分配配置失败: "+err.Error())
+				b.replyWithMarkup(chatID, "❌ 分配配置失败: "+err.Error(), b.getMainMenuMarkup(user))
 			} else {
 				msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("🎉 **成功为用户分配 Cloudflare 配置！**\n该用户后续部署应用将默认使用这套网络配置。"))
 				msg.ReplyMarkup = b.getMainMenuMarkup(user)
@@ -1052,7 +1052,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 				b.userStatesMu.Lock()
 				delete(b.userStates, fromUID)
 				b.userStatesMu.Unlock()
-				b.reply(chatID, "❌ 初始化管理员权限失败: "+errSave.Error())
+				b.replyWithMarkup(chatID, "❌ 初始化管理员权限失败: "+errSave.Error(), b.getMainMenuMarkup(user))
 				return
 			}
 
@@ -1127,7 +1127,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 			b.clearConversationHistory(chatID, state)
 
 			if errSave != nil {
-				b.reply(chatID, "❌ 权限保存失败: "+errSave.Error())
+				b.replyWithMarkup(chatID, "❌ 权限保存失败: "+errSave.Error(), b.getMainMenuMarkup(user))
 			} else {
 				msg := tgbotapi.NewMessage(chatID, fmt.Sprintf("🎉 **成功为副管理员 (UID: %d) 分配权限！**", targetUID))
 				msg.ReplyMarkup = b.getMainMenuMarkup(user)
@@ -1172,7 +1172,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 				b.userStatesMu.Lock()
 				delete(b.userStates, fromUID)
 				b.userStatesMu.Unlock()
-				b.reply(chatID, "❌ 初始化管理员权限失败: "+errSave.Error())
+				b.replyWithMarkup(chatID, "❌ 初始化管理员权限失败: "+errSave.Error(), b.getMainMenuMarkup(user))
 				return
 			}
 
@@ -1378,8 +1378,8 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 
 	case text == "⚙️ 更多功能":
 		b.deleteMessage(chatID, msgID)
-		if user.Role != "master" {
-			b.reply(chatID, "❌ 权限不足。仅最高管理员可访问配置板块。")
+		if user.Role != "master" && !b.hasPermission(user, types.PermCFConfig) && !b.hasPermission(user, types.PermCFAllocate) && !b.hasPermission(user, types.PermCheckUpdate) {
+			b.replyWithMarkup(chatID, "❌ 权限不足。仅授权管理员可访问更多功能板块。", b.getMainMenuMarkup(user))
 			return
 		}
 		b.showMoreFunctionsMenu(chatID, user)
@@ -1998,7 +1998,8 @@ func (b *Bot) handleInvite(chatID int64, creatorUID int64, maxUses int) {
 	}
 
 	if err := b.dbManager.SaveToken(tok); err != nil {
-		b.reply(chatID, "❌ 数据库保存激活码失败: "+err.Error())
+		user, _ := b.dbManager.GetUser(creatorUID)
+		b.replyWithMarkup(chatID, "❌ 数据库保存激活码失败: "+err.Error(), b.getMainMenuMarkup(user))
 		return
 	}
 
