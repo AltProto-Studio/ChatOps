@@ -1,7 +1,11 @@
 package agent
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -47,6 +51,7 @@ func DownloadAndReplaceAgentBinary(downloadURL string, githubToken string, tagNa
 	client := &http.Client{Timeout: 120 * time.Second}
 	var req *http.Request
 
+	assetName := "gopass-agent" // default fallback
 	// If token and tag are present, fetch asset ID first to support private repos
 	if githubToken != "" && tagName != "" {
 		log.Printf("[Agent Updater] Private repo update: fetching release info for tag %s...", tagName)
@@ -105,6 +110,7 @@ func DownloadAndReplaceAgentBinary(downloadURL string, githubToken string, tagNa
 			return fmt.Errorf("failed to find matching asset in release for %s/%s", goOS, goArch)
 		}
 
+		assetName = matchedAsset.Name
 		log.Printf("[Agent Updater] Matched private asset ID %d (%s). Downloading...", matchedAsset.ID, matchedAsset.Name)
 		assetURL := fmt.Sprintf("https://api.github.com/repos/AltProto-Studio/ChatOps/releases/assets/%d", matchedAsset.ID)
 		
@@ -119,6 +125,14 @@ func DownloadAndReplaceAgentBinary(downloadURL string, githubToken string, tagNa
 		req, err = http.NewRequest("GET", downloadURL, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
+		}
+		if tagName != "" {
+			assetName = fmt.Sprintf("gopass-agent-%s-%s", runtime.GOOS, runtime.GOARCH)
+			if runtime.GOOS == "windows" {
+				assetName += ".zip"
+			} else {
+				assetName += ".tar.gz"
+			}
 		}
 	}
 	req.Header.Set("User-Agent", "ChatOps-Agent-Updater")
@@ -139,7 +153,25 @@ func DownloadAndReplaceAgentBinary(downloadURL string, githubToken string, tagNa
 	}
 	out.Close()
 
-	// 2. Rename swap
+	// 2. Extract the executable from the archive
+	extractedPath := filepath.Join(dir, "gopass-agent.extracted.tmp")
+	err = extractExecutable(tempFilePath, extractedPath, assetName)
+	if err != nil {
+		return fmt.Errorf("failed to extract executable from archive: %w", err)
+	}
+	defer os.Remove(extractedPath)
+
+	if runtime.GOOS != "windows" {
+		_ = os.Chmod(extractedPath, 0755)
+	}
+
+	// 3. Health check (Test the new binary)
+	testCmd := exec.Command(extractedPath, "--test")
+	if err := testCmd.Run(); err != nil {
+		return fmt.Errorf("new binary failed health check: %w", err)
+	}
+
+	// 4. Rename swap
 	oldPath := execPath + ".old"
 	if runtime.GOOS == "windows" {
 		oldPath = execPath + ".old.exe"
@@ -151,16 +183,79 @@ func DownloadAndReplaceAgentBinary(downloadURL string, githubToken string, tagNa
 		return fmt.Errorf("failed to rename running binary to old: %w", err)
 	}
 
-	if err := os.Rename(tempFilePath, execPath); err != nil {
+	if err := os.Rename(extractedPath, execPath); err != nil {
 		_ = os.Rename(oldPath, execPath)
 		return fmt.Errorf("failed to replace running binary: %w", err)
 	}
 
-	if runtime.GOOS != "windows" {
-		_ = os.Chmod(execPath, 0755)
+	return nil
+}
+
+func extractExecutable(archivePath, targetPath, assetName string) error {
+	if strings.HasSuffix(assetName, ".zip") {
+		r, err := zip.OpenReader(archivePath)
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+
+		for _, f := range r.File {
+			if strings.Contains(f.Name, "gopass-master") || strings.Contains(f.Name, "gopass-agent") {
+				rc, err := f.Open()
+				if err != nil {
+					return err
+				}
+				defer rc.Close()
+				out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+				if err != nil {
+					return err
+				}
+				defer out.Close()
+				_, err = io.Copy(out, rc)
+				return err
+			}
+		}
+		return errors.New("executable not found in zip archive")
 	}
 
-	return nil
+	if strings.HasSuffix(assetName, ".tar.gz") {
+		f, err := os.Open(archivePath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		gzr, err := gzip.NewReader(f)
+		if err != nil {
+			return err
+		}
+		defer gzr.Close()
+
+		tr := tar.NewReader(gzr)
+		for {
+			header, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+
+			if strings.Contains(header.Name, "gopass-master") || strings.Contains(header.Name, "gopass-agent") {
+				out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+				if err != nil {
+					return err
+				}
+				defer out.Close()
+				_, err = io.Copy(out, tr)
+				return err
+			}
+		}
+		return errors.New("executable not found in tar.gz archive")
+	}
+
+	// If it's not an archive (e.g. raw binary), just rename/copy it
+	return os.Rename(archivePath, targetPath)
 }
 
 // RestartAgent spawns the new Agent process and exits the current one

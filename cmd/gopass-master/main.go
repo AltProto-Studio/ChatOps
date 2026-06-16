@@ -35,7 +35,13 @@ func main() {
 	tlsCertFlag := flag.String("tls-cert", "", "Path to TLS certificate file (override config)")
 	tlsKeyFlag := flag.String("tls-key", "", "Path to TLS key file (override config)")
 	githubTokenFlag := flag.String("github-token", "", "GitHub token for private repository releases (override config)")
+	testFlag := flag.Bool("test", false, "Run health check and exit (used for OTA updates)")
+	updateChatIDFlag := flag.Int64("update-success-chat-id", 0, "Chat ID to notify upon successful startup")
 	flag.Parse()
+
+	if *testFlag {
+		os.Exit(0)
+	}
 
 	// 1. Load YAML configuration
 	log.Printf("[Init] Loading configuration from '%s'...", *configPath)
@@ -145,6 +151,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize Telegram Bot: %v", err)
 	}
+
+	if *updateChatIDFlag > 0 {
+		go bot.SendUpdateSuccessNotification(*updateChatIDFlag)
+	}
+
 	bot.Start()
 	defer bot.Stop()
 

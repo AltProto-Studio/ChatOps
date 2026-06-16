@@ -1,6 +1,9 @@
 package master
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -171,7 +175,26 @@ func DownloadAndReplaceBinary(asset *GitHubReleaseAsset, githubToken string) err
 	}
 	out.Close()
 
-	// 2. Perform the rename swap
+	// 2. Extract the executable from the archive
+	extractedPath := filepath.Join(dir, "gopass.extracted.tmp")
+	err = extractExecutable(tempFilePath, extractedPath, asset.Name)
+	if err != nil {
+		return fmt.Errorf("failed to extract executable from archive: %w", err)
+	}
+	defer os.Remove(extractedPath)
+
+	// Ensure executable permissions on Unix for testing
+	if runtime.GOOS != "windows" {
+		_ = os.Chmod(extractedPath, 0755)
+	}
+
+	// 3. Health check (Test the new binary)
+	testCmd := exec.Command(extractedPath, "--test")
+	if err := testCmd.Run(); err != nil {
+		return fmt.Errorf("new binary failed health check (architecture mismatch or corrupted): %w", err)
+	}
+
+	// 4. Perform the rename swap
 	oldPath := execPath + ".old"
 	if runtime.GOOS == "windows" {
 		oldPath = execPath + ".old.exe"
@@ -186,22 +209,84 @@ func DownloadAndReplaceBinary(asset *GitHubReleaseAsset, githubToken string) err
 	}
 
 	// Rename new binary to running path
-	if err := os.Rename(tempFilePath, execPath); err != nil {
+	if err := os.Rename(extractedPath, execPath); err != nil {
 		// Try to restore original if possible
 		_ = os.Rename(oldPath, execPath)
 		return fmt.Errorf("failed to replace running binary: %w", err)
 	}
 
-	// Ensure executable permissions on Unix
-	if runtime.GOOS != "windows" {
-		_ = os.Chmod(execPath, 0755)
-	}
-
 	return nil
 }
 
+func extractExecutable(archivePath, targetPath, assetName string) error {
+	if strings.HasSuffix(assetName, ".zip") {
+		r, err := zip.OpenReader(archivePath)
+		if err != nil {
+			return err
+		}
+		defer r.Close()
+
+		for _, f := range r.File {
+			if strings.Contains(f.Name, "gopass-master") || strings.Contains(f.Name, "gopass-agent") {
+				rc, err := f.Open()
+				if err != nil {
+					return err
+				}
+				defer rc.Close()
+				out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+				if err != nil {
+					return err
+				}
+				defer out.Close()
+				_, err = io.Copy(out, rc)
+				return err
+			}
+		}
+		return errors.New("executable not found in zip archive")
+	}
+
+	if strings.HasSuffix(assetName, ".tar.gz") {
+		f, err := os.Open(archivePath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		gzr, err := gzip.NewReader(f)
+		if err != nil {
+			return err
+		}
+		defer gzr.Close()
+
+		tr := tar.NewReader(gzr)
+		for {
+			header, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return err
+			}
+
+			if strings.Contains(header.Name, "gopass-master") || strings.Contains(header.Name, "gopass-agent") {
+				out, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+				if err != nil {
+					return err
+				}
+				defer out.Close()
+				_, err = io.Copy(out, tr)
+				return err
+			}
+		}
+		return errors.New("executable not found in tar.gz archive")
+	}
+
+	// If it's not an archive (e.g. raw binary), just rename/copy it
+	return os.Rename(archivePath, targetPath)
+}
+
 // RestartProcess stops running services, spawns the new binary, and exits the parent
-func RestartProcess(dbMgr interface{ Close() error }, gRPCServer interface{ Stop() }) error {
+func RestartProcess(dbMgr interface{ Close() error }, gRPCServer interface{ Stop() }, chatID int64) error {
 	execPath, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
@@ -225,7 +310,11 @@ func RestartProcess(dbMgr interface{ Close() error }, gRPCServer interface{ Stop
 	time.Sleep(500 * time.Millisecond)
 
 	// 3. Spawn the new process
-	cmd := exec.Command(execPath, os.Args[1:]...)
+	args := os.Args[1:]
+	if chatID > 0 {
+		args = append(args, fmt.Sprintf("--update-success-chat-id=%d", chatID))
+	}
+	cmd := exec.Command(execPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

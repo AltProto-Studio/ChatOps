@@ -597,7 +597,7 @@ func (b *Bot) HandleMessage(msg *tgbotapi.Message) {
 				b.deleteMessage(chatID, id)
 			}
 
-			err = RestartProcess(b.dbManager, b.gRPCServer)
+			err = RestartProcess(b.dbManager, b.gRPCServer, chatID)
 			if err != nil {
 				b.reply(chatID, "❌ 重新启动服务失败: "+err.Error())
 			}
@@ -2696,4 +2696,12 @@ func (b *Bot) handleFetchCFZones(chatID int64, fromUID int64, user *types.User) 
 	b.userStatesMu.Unlock()
 
 	b.updateWizardPrompt(chatID, fromUID, "WAITING_FOR_CF_ZONE_SELECTION", "☁️ 请选择要绑定的主域名:", replyMarkup)
+}
+
+// SendUpdateSuccessNotification sends a restart success notification to the administrator
+func (b *Bot) SendUpdateSuccessNotification(chatID int64) {
+	// Give the bot a second to fully connect
+	time.Sleep(2 * time.Second)
+	text := fmt.Sprintf("🎉 **机器人热更新与重启完成！**\n当前版本：%s\n\n您现在可以继续发送指令了。", types.CurrentVersion)
+	b.reply(chatID, text)
 }

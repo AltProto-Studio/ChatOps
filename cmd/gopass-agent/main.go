@@ -23,7 +23,12 @@ func main() {
 	tlsEnabledFlag := flag.String("tls-enabled", "", "Enable gRPC TLS (true/false) (override config)")
 	tlsSkipVerifyFlag := flag.String("tls-skip-verify", "", "Skip gRPC TLS verification (true/false) (override config)")
 	tlsCAFlag := flag.String("tls-ca", "", "Path to CA certificate file (override config)")
+	testFlag := flag.Bool("test", false, "Run health check and exit (used for OTA updates)")
 	flag.Parse()
+
+	if *testFlag {
+		os.Exit(0)
+	}
 
 	// 1. Load YAML configuration
 	log.Printf("[Init] Loading configuration from '%s'...", *configPath)
